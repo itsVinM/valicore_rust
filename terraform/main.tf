@@ -16,9 +16,9 @@ resource "docker_image" "valicore" {
   }
 }
 
-resource "docker_container" "valicore_validate" {
-  name  = "valicore-validate"
+resource "docker_container" "valicore" {
+  name  = "valicore"
   image = docker_image.valicore.image_id
-  command = ["valicore", "validate", "/app/examples/basic_campaign.yaml"]
+  command = ["valicore", "resources"]
   rm     = true
 }

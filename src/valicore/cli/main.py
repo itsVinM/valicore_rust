@@ -1,197 +1,123 @@
 from __future__ import annotations
 
-import json
+import csv
 import sys
 from pathlib import Path
 
 import click
 
 from valicore import __version__
-from valicore.campaign.loader import CampaignLoader
-from valicore.campaign.runner import CampaignRunner as PythonRunner
-from valicore.reporting.html_reporter import HTMLReporter
-from valicore.reporting.pdf_reporter import PDFReporter
-from valicore._rust import py_campaign_info, py_run_campaign
+from valicore.core import RustSignalProcessor
+
+
+def _find_instruments() -> list[str]:
+    """List available VISA resources."""
+    try:
+        import pyvisa
+        rm = pyvisa.ResourceManager()
+        resources = rm.list_resources()
+        rm.close()
+        return resources
+    except Exception:
+        return []
 
 
 @click.group()
 @click.version_option(version=__version__, prog_name="valicore")
 def cli() -> None:
-    """valicore — Validation Orchestration Framework"""
+    """valicore — oscilloscope control & signal analysis."""
 
 
 @cli.command()
-@click.argument("campaign", type=click.Path(exists=True))
-@click.option("--output", "-o", default="report", help="Output directory or file (without ext)")
-@click.option("--format", "-f", "formats", multiple=True, default=["html"],
-              type=click.Choice(["html", "pdf"]), help="Report format(s)")
-@click.option("--instrument", "-i", "overrides", multiple=True,
-              metavar="NAME=RESOURCE", help="Override instrument VISA resource")
-@click.option("--scpi", default="rust", type=click.Choice(["rust", "python"]),
-              help="SCPI backend: rust (tokio, fast) or python (pyvisa, compatible)")
-@click.option("--json", "json_output", is_flag=True, help="Emit JSON results to stdout")
-def run(
-    campaign: str,
-    output: str,
-    formats: tuple[str, ...],
-    overrides: tuple[str, ...],
-    scpi: str,
-    json_output: bool,
-) -> None:
-    """Execute a test campaign from a YAML file."""
-    instrument_overrides: dict[str, str] = {}
-    for ov in overrides:
-        if "=" not in ov:
-            click.echo(f"Invalid override format: {ov} (expected NAME=RESOURCE)", err=True)
-            sys.exit(1)
-        name, resource = ov.split("=", 1)
-        instrument_overrides[name.strip()] = resource.strip()
+def resources() -> None:
+    """List available VISA instruments."""
+    from valicore.instruments import REGISTRY
+    click.echo("Drivers:")
+    for name in REGISTRY:
+        click.echo(f"  {name}")
+    visa = _find_instruments()
+    if visa:
+        click.echo("\nVISA resources:")
+        for r in visa:
+            click.echo(f"  {r}")
 
-    if scpi == "rust":
-        results_raw = py_run_campaign(campaign)
-        results = json.loads(results_raw)
-    else:
-        loader = CampaignLoader()
-        campaign_obj = loader.load(campaign)
-        runner = PythonRunner(campaign_obj, instrument_overrides=instrument_overrides)
-        try:
-            results = runner.run()
-        finally:
-            runner.close()
 
-    if json_output:
-        click.echo(json.dumps(results, indent=2, default=str))
+@cli.command()
+@click.option("--resource", "-r", required=True, help="VISA resource string")
+@click.option("--kind", "-k", default="rigol_ds1000z", help="Instrument driver")
+@click.option("--channel", "-c", default="CH1", help="Channel to capture")
+@click.option("--samples", "-n", default=10000, help="Number of samples")
+@click.option("--output", "-o", default=None, help="Write samples to CSV")
+@click.option("--fft", is_flag=True, help="Print FFT peak frequency")
+@click.option("--stats", is_flag=True, help="Print signal stats")
+def capture(resource: str, kind: str, channel: str, samples: int, output: str | None, fft: bool, stats: bool) -> None:
+    """Capture waveform data from an oscilloscope."""
+    from valicore.instruments import create_instrument, REGISTRY
 
-    output_path = Path(output)
-    for fmt in formats:
-        if fmt == "html":
-            reporter = HTMLReporter()
-            dest = output_path.with_suffix(".html") if output_path.suffix else output_path / "report.html"
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            reporter.write(results, dest, version=__version__)
-            click.echo(f"HTML report: {dest.resolve()}")
-        elif fmt == "pdf":
-            reporter = PDFReporter()
-            dest = output_path.with_suffix(".pdf") if output_path.suffix else output_path / "report.pdf"
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            reporter.write(results, dest, version=__version__)
-            click.echo(f"PDF report: {dest.resolve()}")
-
-    total = 0
-    failed = 0
-    for g in results["groups"].values():
-        steps = g["steps"]
-        total += len(steps)
-        for s in steps:
-            if s["status"] == "failed":
-                failed += 1
-
-    if failed:
-        click.echo(f"\n{failed}/{total} steps FAILED", err=True)
+    if kind not in REGISTRY:
+        click.echo(f"Unknown instrument: {kind}. Available: {', '.join(REGISTRY)}", err=True)
         sys.exit(1)
-    click.echo(f"\nAll {total} steps passed.")
-
-
-@cli.command()
-@click.argument("campaign", type=click.Path(exists=True))
-@click.option("--engine", type=click.Choice(["rust", "python"]), default="rust",
-              help="Validation engine backend")
-def validate(campaign: str, engine: str) -> None:
-    """Validate a campaign YAML file without executing."""
-    if engine == "rust":
-        try:
-            info = json.loads(py_campaign_info(campaign))
-        except ValueError as e:
-            click.echo(f"Validation FAILED: {e}", err=True)
-            sys.exit(1)
-        click.echo(f"Valid campaign: {info['title']} (v{info.get('version', '1.0')})")
-        click.echo(f"  Instruments: {len(info['instruments'])}")
-        click.echo(f"  Groups: {len(info['groups'])}")
-        click.echo(f"  Total steps: {info['total_steps']}")
-    else:
-        loader = CampaignLoader()
-        try:
-            campaign_obj = loader.load(campaign)
-        except (FileNotFoundError, ValueError) as e:
-            click.echo(f"Validation FAILED: {e}", err=True)
-            sys.exit(1)
-        click.echo(f"Valid campaign: {campaign_obj.title} (v{campaign_obj.version})")
-        click.echo(f"  Instruments: {len(campaign_obj.instruments)}")
-        click.echo(f"  Groups: {len(campaign_obj.groups)}")
-        total_steps = sum(len(g.steps) for g in campaign_obj.groups.values())
-        click.echo(f"  Total steps: {total_steps}")
-
-
-@cli.command()
-@click.argument("directory", type=click.Path(exists=True))
-def list_campaigns(directory: str) -> None:
-    """List all campaigns found in a directory."""
-    loader = CampaignLoader()
+    instr = create_instrument(kind, resource)
     try:
-        campaigns = loader.load_all(directory)
-    except NotADirectoryError as e:
-        click.echo(str(e), err=True)
-        sys.exit(1)
+        instr.connect()
+        data = instr.get_waveform(channel)
+    finally:
+        instr.close()
 
-    if not campaigns:
-        click.echo("No campaign files found.")
-        return
+    click.echo(f"Captured {len(data)} samples from {channel}")
 
-    for c in campaigns:
-        steps = sum(len(g.steps) for g in c.groups.values())
-        click.echo(f"  {c.title:40s} v{c.version:5s}  {steps:3d} steps")
+    if output:
+        path = Path(output)
+        with open(path, "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["sample", "value"])
+            for i, v in enumerate(data):
+                w.writerow([i, v])
+        click.echo(f"Saved to {path}")
+
+    if fft:
+        sr = 1e6
+        result = RustSignalProcessor.fft(data, sr)
+        peak_idx = result["magnitudes"].index(max(result["magnitudes"]))
+        click.echo(f"FFT peak: {result['frequencies_hz'][peak_idx]:.1f} Hz")
+
+    if stats:
+        s = RustSignalProcessor.stats(data)
+        click.echo(f"Stats: mean={s['mean']:.4f}, rms={s['rms']:.4f}, "
+                   f"min={s['min']:.4f}, max={s['max']:.4f}")
 
 
 @cli.command()
-@click.option("--output", "-o", default="campaign.yaml", help="Output file path")
-def init(output: str) -> None:
-    """Create a template campaign YAML file."""
-    template = """\
-title: "My Validation Campaign"
-version: "1.0"
-description: "TODO: describe the campaign"
+@click.argument("file", type=click.Path(exists=True))
+@click.option("--fft", is_flag=True, help="Compute FFT")
+@click.option("--stats", is_flag=True, help="Compute statistics")
+@click.option("--thd", type=float, default=None, metavar="FREQ_HZ", help="Compute THD at fundamental frequency")
+def analyze(file: str, fft: bool, stats: bool, thd: float | None) -> None:
+    """Analyze signal data from a CSV file (column: value)."""
+    import csv
+    samples: list[float] = []
+    with open(file) as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            samples.append(float(row["value"]))
 
-instruments:
-  dmm:
-    kind: keysight_34460a
-    resource: "TCPIP0::192.168.1.100::inst0::INSTR"
-    timeout: 5000
+    click.echo(f"Loaded {len(samples)} samples from {file}")
 
-  psu:
-    kind: rs_nga100
-    resource: "TCPIP0::192.168.1.101::inst0::INSTR"
-    timeout: 5000
+    if fft:
+        sr = 1e6
+        result = RustSignalProcessor.fft(samples, sr)
+        peak_idx = result["magnitudes"].index(max(result["magnitudes"]))
+        click.echo(f"FFT peak: {result['frequencies_hz'][peak_idx]:.1f} Hz")
 
-groups:
-  power_up:
-    description: "Power-up sequence validation"
-    steps:
-      - name: "Measure 3.3V rail"
-        instrument: dmm
-        measurements:
-          - name: "Vout_3v3"
-            type: "volt:dc"
-            limits:
-              - op: within
-                value: 3.3
-                tolerance: 0.05
-      - name: "Measure 5.0V rail"
-        instrument: dmm
-        measurements:
-          - name: "Vout_5v0"
-            type: "volt:dc"
-            limits:
-              - op: within
-                value: 5.0
-                tolerance: 0.1
+    if stats:
+        s = RustSignalProcessor.stats(samples)
+        click.echo(f"Stats: mean={s['mean']:.4f}, rms={s['rms']:.4f}, "
+                   f"min={s['min']:.4f}, max={s['max']:.4f}")
 
-output:
-  formats:
-    - html
-    - pdf
-"""
-    path = Path(output)
-    if path.exists():
-        click.confirm(f"{path} already exists. Overwrite?", abort=True)
-    path.write_text(template)
-    click.echo(f"Created template: {path.resolve()}")
+    if thd is not None:
+        sr = 1e6
+        val = RustSignalProcessor.thd(samples, thd, sr)
+        click.echo(f"THD: {val:.2f}%")
+
+
+

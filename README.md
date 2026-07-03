@@ -1,40 +1,58 @@
 # valicore
 
-YAML-driven validation orchestration with a Python CLI and Rust engine.
+SCPI oscilloscope driver + signal analysis in Python and Rust.
 
-```bash
-pip install valicore
-valicore init -o campaign.yaml
-valicore run campaign.yaml
+```python
+from valicore.instruments import RigolDS1000Z
+from valicore.core import RustSignalProcessor
+
+scope = RigolDS1000Z("USB0::0x1AB1::0x04B0::DS1ZA123456::INSTR")
+samples = scope.get_waveform("CH1")              # grab from hardware
+
+stats = RustSignalProcessor.stats(samples)        # mean, rms, peak
+freqs, mags = RustSignalProcessor.fft(samples, 1e6)  # FFT
 ```
 
-## Features
+## Supported scopes
 
-- YAML campaigns — declare instruments, measurements, limits, test flow
-- SCPI drivers — Keysight, Rigol, R&S (extensible)
-- Rust engine — async I/O via tokio, signal processing (FFT, PSD, THD, filtering)
-- HTML/PDF reports, JUnit CI hooks, Docker multi-stage build
-- `--scpi python` fallback for debugging without compiled module
+- Rigol DS1000Z series
+- Keysight 34460A DMM (measurement data)
+- Rohde & Schwarz NGA100 PSU (voltage/current reads)
+
+## Signal processing (Rust)
+
+| Function | Description |
+|---|---|
+| `fft(samples, rate)` | Magnitude spectrum |
+| `psd(samples, rate)` | Power spectral density |
+| `thd(samples, fundamental, rate)` | Total harmonic distortion |
+| `stats(samples)` | Mean, RMS, min, max, variance |
+| `window(samples, type)` | Hann, Hamming, Blackman |
+| `filter(samples, type, cutoff, order)` | Lowpass, highpass, bandpass |
+| `cross_correlate(a, b)` | Time-domain correlation |
+
+All run in Rust via PyO3. Pure-Python fallback available.
 
 ## Deploy
 
 ```bash
-# K8s (CronJob)
-docker build -t valicore .
-kubectl apply -k k8s/
+# K8s (Job)
+docker build -t valicore . && kubectl apply -k k8s/
 
 # Terraform (local Docker)
 cd terraform && terraform init && terraform apply
 ```
 
+## CLI
+
+```bash
+valicore scope --resource "TCPIP::..." --channel CH1 --samples 10000
+```
+
 ## Development
 
 ```bash
+python3 -m venv .venv && source .venv/bin/activate
 pip install maturin
 maturin develop --release
-pytest
 ```
-
-## License
-
-MIT
