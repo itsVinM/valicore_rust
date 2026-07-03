@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: valicore-campaigns
+data:
+  smoke-test.yaml: |
+    title: "Smoke Test"
+    version: "1.0"
+    instruments:
+      dmm:
+        kind: keysight_34460a
+        resource: "TCPIP0::192.168.1.100::inst0::INSTR"
+    groups:
+      smoke:
+        steps:
+          - name: "Check 3.3V rail"
+            instrument: dmm
+            measurements:
+              - name: "Vout_3v3"
+                type: "volt:dc"
+                limits:
+                  - op: within
+                    value: 3.3
+                    tolerance: 0.05

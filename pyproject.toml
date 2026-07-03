@@ -1,0 +1,56 @@
+[build-system]
+requires = ["maturin>=1.8,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "valicore"
+version = "0.1.0"
+description = "Validation Orchestration Framework — YAML-driven test campaigns with Python + Rust"
+authors = [{ name = "Valicore Contributors" }]
+license = { text = "MIT" }
+readme = "README.md"
+requires-python = ">=3.10"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Manufacturing",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Rust",
+]
+dependencies = [
+    "click>=8.1",
+    "pyvisa>=1.14",
+    "pyyaml>=6.0",
+    "pydantic>=2.0",
+    "jinja2>=3.1",
+    "weasyprint>=62",
+    "numpy>=1.24",
+]
+
+[project.urls]
+Homepage = "https://github.com/valicore/valicore"
+Documentation = "https://valicore.readthedocs.io"
+
+[project.scripts]
+valicore = "valicore.cli.main:cli"
+
+[tool.maturin]
+python-source = "src"
+module-name = "valicore._rust"
+features = ["pyo3/extension-module"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W"]
