@@ -6,8 +6,9 @@ The YAML spec (`src/valicore/specs/oscilloscope.yaml`) defines SCPI commands for
 
 ```python
 from valicore import Oscilloscope, RustSignalProcessor
-scope = Oscilloscope("RIGOL")
-scope.connect("192.168.1.15")
+
+# Auto-detect brand from *IDN? response
+scope = Oscilloscope.from_ip("192.168.1.15")
 data = scope.get_waveform("CH1")
 stats = RustSignalProcessor.stats(data)
 ```
@@ -20,7 +21,7 @@ stats = RustSignalProcessor.stats(data)
 
 ```
 oscilloscope.yaml → Oscilloscope (Rust) → PyO3 → CLI / Python
-                       ↕ TCP/IP (:5025)
+                       ↕ TCP/IP (port from ip_config)
 ```
 
 `_SETTINGS` / `_GETTINGS` dispatch maps drive generic `setting(name, kwargs)` / `getting(name, kwargs)` calls — no brand-specific Python code needed for new commands.
@@ -28,13 +29,19 @@ oscilloscope.yaml → Oscilloscope (Rust) → PyO3 → CLI / Python
 ## YAML spec format
 
 ```yaml
-RIGOL:
-  endian: little
-  quirks: ":SYSTem:LANGuage EN"
-  cmds:
-    set_v_scale: ":{ch}:SCAL {val}"
-    get_v_scale: ":{ch}:SCAL?"
-    get_raw: ":WAVeform:DATA? {ch}"
+ip_config:
+  port: 5025                   # global connection defaults
+
+OSCILLOSCOPES:
+  RIGOL:
+    default_ip: "192.168.1.15" # per-brand default
+    idn_pattern: "RIGOL"       # matched against *IDN? for auto-detect
+    endian: little
+    quirks: ":SYSTem:LANGuage EN"
+    cmds:
+      set_v_scale: ":{ch}:SCAL {val}"
+      get_v_scale: ":{ch}:SCAL?"
+      get_raw: ":WAVeform:DATA? {ch}"
 ```
 
 Placeholders (`{ch}`, `{val}`, `{edge}`) are substituted at runtime. Any brand goes in one file.
@@ -42,8 +49,9 @@ Placeholders (`{ch}`, `{val}`, `{edge}`) are substituted at runtime. Any brand g
 ## CLI
 
 ```
-valicore resources                         # list brands
-valicore capture --brand RIGOL -r 192.168.1.15 -c CH1 --fft --stats -o out.csv
+valicore resources                              # list brands
+valicore capture -r 192.168.1.15 -c CH1 --fft   # auto-detect brand
+valicore capture --brand RIGOL -r 192.168.1.15   # explicit brand
 valicore analyze out.csv --fft --thd 1000
 ```
 

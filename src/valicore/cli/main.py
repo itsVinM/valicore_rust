@@ -59,21 +59,28 @@ def resources() -> None:
 
 
 @cli.command()
-@click.option("--brand", "-b", default="RIGOL", help="Oscilloscope brand (from YAML spec)")
+@click.option("--brand", "-b", default=None, help="Oscilloscope brand (auto-detect if omitted)")
 @click.option("--resource", "-r", required=True, help="IP address or VISA resource string")
-@click.option("--port", "-p", default=5025, type=int, help="TCP port")
+@click.option("--port", "-p", type=int, default=None, help="TCP port (defaults to brand's ip_config.port)")
 @click.option("--channel", "-c", default="CH1", help="Channel to capture (e.g. CH1, 1)")
 @click.option("--output", "-o", default=None, help="Write samples to CSV")
 @click.option("--fft", is_flag=True, help="Print FFT peak frequency")
 @click.option("--stats", is_flag=True, help="Print signal stats")
-def capture(brand: str, resource: str, port: int, channel: str, output: str | None, fft: bool, stats: bool) -> None:
+def capture(brand: str | None, resource: str, port: int | None, channel: str, output: str | None, fft: bool, stats: bool) -> None:
     """Capture waveform data from an oscilloscope."""
-    brands = Oscilloscope.brands()
-    if brand.upper() not in [b.upper() for b in brands]:
-        click.echo(f"Unknown brand: {brand}. Available: {', '.join(brands)}", err=True)
-        sys.exit(1)
-
     addr = _parse_address(resource)
+
+    if brand is None:
+        click.echo("Auto-detecting brand...")
+        detected = Oscilloscope.detect_brand(addr, port)
+        brand = detected
+        click.echo(f"Detected: {brand}")
+    else:
+        brands = Oscilloscope.brands()
+        if brand.upper() not in [b.upper() for b in brands]:
+            click.echo(f"Unknown brand: {brand}. Available: {', '.join(brands)}", err=True)
+            sys.exit(1)
+
     scope = Oscilloscope(brand)
 
     try:

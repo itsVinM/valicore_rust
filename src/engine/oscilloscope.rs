@@ -32,8 +32,14 @@ impl std::error::Error for ScopeError {}
 
 // ── YAML structure ──────────────────────────────────────────
 
+#[derive(Debug, Clone, Deserialize)]
+struct IpConfig {
+    port: u16,
+}
+
 #[derive(Debug, Deserialize)]
 struct ScopeLibrary {
+    ip_config: Option<IpConfig>,
     #[serde(rename = "OSCILLOSCOPES")]
     scopes: HashMap<String, ScopeSpec>,
 }
@@ -41,7 +47,8 @@ struct ScopeLibrary {
 #[derive(Debug, Clone, Deserialize)]
 struct ScopeSpec {
     description: String,
-    ip_address: String,
+    default_ip: String,
+    idn_pattern: String,
     endian: String,
     quirks: String,
     cmds: HashMap<String, String>,
@@ -88,6 +95,7 @@ pub struct Oscilloscope {
     stream: Option<TcpStream>,
     buf: Vec<u8>,
     timeout_ms: u64,
+    default_port: u16,
     active_channels: Vec<u8>,
     instrument_id: String,
 }
@@ -113,6 +121,48 @@ impl Oscilloscope {
         Ok(format!("{brand} — {}", spec.description))
     }
 
+    /// Connect to an instrument, query *IDN?, and auto-detect its brand
+    /// by matching against each brand's `idn_pattern`.
+    pub async fn detect_brand(addr: &str, port: u16, timeout_ms: u64) -> Result<String, ScopeError> {
+        let endpoint = format!("{addr}:{port}");
+        let dur = Duration::from_millis(timeout_ms);
+        let mut stream = timeout(dur, TcpStream::connect(&endpoint))
+            .await
+            .map_err(|_| ScopeError::Connection(format!("timeout to {endpoint}")))?
+            .map_err(|e| ScopeError::Connection(format!("{endpoint}: {e}")))?;
+
+        let _ = timeout(dur, stream.write_all(b"*IDN?\n")).await;
+        let mut buf = Vec::new();
+        let _ = timeout(dur, read_line(&mut stream, &mut buf)).await;
+        let _ = stream.shutdown().await;
+        let idn = String::from_utf8_lossy(&buf).trim().to_string();
+
+        let lib = Self::load_library().map_err(ScopeError::Config)?;
+        for (brand, spec) in &lib.scopes {
+            if idn.to_uppercase().contains(&spec.idn_pattern.to_uppercase()) {
+                return Ok(brand.clone());
+            }
+        }
+        Err(ScopeError::Config(format!(
+            "no brand matches *IDN? response: {idn}"
+        )))
+    }
+
+    /// Create and connect an Oscilloscope with auto-detected brand.
+    /// Port defaults to 5025 for probe, then to the detected brand's default port for connection.
+    pub async fn from_ip(
+        addr: &str,
+        port: Option<u16>,
+        timeout_ms: u64,
+    ) -> Result<Self, ScopeError> {
+        let probe_port = port.unwrap_or(5025);
+        let brand = Self::detect_brand(addr, probe_port, timeout_ms).await?;
+        let mut scope = Self::new(&brand, timeout_ms)?;
+        let connect_port = port.unwrap_or(scope.default_port);
+        scope.connect(addr, connect_port).await?;
+        Ok(scope)
+    }
+
     pub fn new(brand: &str, timeout_ms: u64) -> Result<Self, ScopeError> {
         let lib = Self::load_library().map_err(ScopeError::Config)?;
         let spec = lib
@@ -123,12 +173,14 @@ impl Oscilloscope {
                 let available = Oscilloscope::brands();
                 ScopeError::Config(format!("unknown brand '{brand}', available: {}", available.join(", ")))
             })?;
+        let default_port = lib.ip_config.as_ref().map(|c| c.port).unwrap_or(5025);
         Ok(Self {
             brand: brand.to_string(),
             spec,
             stream: None,
             buf: Vec::with_capacity(65536),
             timeout_ms,
+            default_port,
             active_channels: Vec::new(),
             instrument_id: "OFFLINE".to_string(),
         })
@@ -136,6 +188,10 @@ impl Oscilloscope {
 
     pub fn brand(&self) -> &str {
         &self.brand
+    }
+
+    pub fn default_port(&self) -> u16 {
+        self.default_port
     }
 
     pub fn is_connected(&self) -> bool {

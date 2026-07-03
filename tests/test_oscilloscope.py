@@ -83,3 +83,11 @@ class TestOscilloscope:
         scope = Oscilloscope("RIGOL")
         cmd = scope.cmd("get_v_scale", [("ch", "CH1")])
         assert cmd == ":CH1:SCAL?"
+
+    def test_default_port(self):
+        scope = Oscilloscope("RIGOL")
+        assert scope.default_port() == 5025
+
+    def test_detect_brand_no_connection(self):
+        with pytest.raises(RuntimeError):
+            Oscilloscope.detect_brand("192.0.2.1", 5025, 100)

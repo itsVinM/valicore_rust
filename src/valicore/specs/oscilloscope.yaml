@@ -2,10 +2,14 @@
 # Loaded by ScopeAutomation driver.
 # Brands define SCPI command patterns + default IP; instances override IP + brand.
 
+ip_config:
+  port: 5025
+
 OSCILLOSCOPES:
   RS:
     description: "Rohde & Schwarz RTO/RTM/RTC series"
-    ip_address: "192.168.1.10"
+    default_ip: "192.168.1.10"
+    idn_pattern: "Rohde"
     endian: little
     quirks: "FORMat:BORDer LENDian; :FORMat REAL,32"
     cmds:
@@ -37,7 +41,8 @@ OSCILLOSCOPES:
 
   TEKTRONIX:
     description: "Tektronix TDS/MSO/DPO series"
-    ip_address: "192.168.1.20"
+    default_ip: "192.168.1.20"
+    idn_pattern: "TEKTRONIX"
     endian: big
     quirks: "DATA:ENCDG FPB; WIDTH 4"
     cmds:
@@ -70,7 +75,8 @@ OSCILLOSCOPES:
 
   KEYSIGHT:
     description: "Keysight InfiniiVision / Infiniium series"
-    ip_address: "192.168.1.30"
+    default_ip: "192.168.1.30"
+    idn_pattern: "KEYSIGHT"
     endian: little
     quirks: ":WAV:FORM FLOAT"
     cmds:
@@ -102,7 +108,8 @@ OSCILLOSCOPES:
 
   RIGOL:
     description: "Rigol DS1000Z / DS2000 / DS4000 series"
-    ip_address: "192.168.1.15"
+    default_ip: "192.168.1.15"
+    idn_pattern: "RIGOL"
     endian: little
     quirks: ":SYSTem:LANGuage EN"
     cmds:
@@ -134,7 +141,8 @@ OSCILLOSCOPES:
 
   YOKOGAWA:
     description: "Yokogawa DLM / DL series"
-    ip_address: "192.168.1.40"
+    default_ip: "192.168.1.40"
+    idn_pattern: "YOKOGAWA"
     endian: little
     quirks: "FORMat:BORDer NORMal; :FORMat REAL,32"
     cmds:
@@ -166,7 +174,8 @@ OSCILLOSCOPES:
 
   SIGLENT:
     description: "Siglent SDS1000X / SDS2000X / SDS5000X series"
-    ip_address: "192.168.1.50"
+    default_ip: "192.168.1.50"
+    idn_pattern: "SIGLENT"
     endian: little
     quirks: "*CLS"
     cmds:
@@ -198,7 +207,8 @@ OSCILLOSCOPES:
 
   LECROY:
     description: "Teledyne LeCroy WaveSurfer / WaveRunner / WavePro series"
-    ip_address: "192.168.1.60"
+    default_ip: "192.168.1.60"
+    idn_pattern: "LECROY"
     endian: big
     quirks: "COMM_HEAD OFF; :WAVEFORM:FORMAT BYTE"
     cmds:
@@ -230,7 +240,8 @@ OSCILLOSCOPES:
 
   GW_INSTEK:
     description: "GW Instek GDS series"
-    ip_address: "192.168.1.70"
+    default_ip: "192.168.1.70"
+    idn_pattern: "GW"
     endian: big
     quirks: "*CLS"
     cmds:
@@ -262,7 +273,8 @@ OSCILLOSCOPES:
 
   PRODIGIT:
     description: "Prodigit oscilloscope series"
-    ip_address: "192.168.1.80"
+    default_ip: "192.168.1.80"
+    idn_pattern: "PRODIGIT"
     endian: big
     quirks: "*CLS"
     cmds:
@@ -294,7 +306,8 @@ OSCILLOSCOPES:
 
   OWON:
     description: "OWON SDS series"
-    ip_address: "192.168.1.90"
+    default_ip: "192.168.1.90"
+    idn_pattern: "OWON"
     endian: big
     quirks: ":SYSTem:LANGuage EN"
     cmds:

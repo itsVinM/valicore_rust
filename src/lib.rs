@@ -65,6 +65,10 @@ impl PyOscilloscope {
         self.inner.brand().to_string()
     }
 
+    fn default_port(&self) -> u16 {
+        self.inner.default_port()
+    }
+
     fn is_connected(&self) -> bool {
         self.inner.is_connected()
     }
@@ -79,7 +83,8 @@ impl PyOscilloscope {
 
     #[pyo3(signature = (addr, port=None))]
     fn connect(&mut self, addr: &str, port: Option<u16>) -> PyResult<()> {
-        get_runtime().block_on(self.inner.connect(addr, port.unwrap_or(5025))).map_err(to_pyerr)
+        let p = port.unwrap_or_else(|| self.inner.default_port());
+        get_runtime().block_on(self.inner.connect(addr, p)).map_err(to_pyerr)
     }
 
     fn close(&mut self) {
@@ -112,6 +117,31 @@ impl PyOscilloscope {
     #[staticmethod]
     fn brands() -> Vec<String> {
         Oscilloscope::brands()
+    }
+
+    #[staticmethod]
+    #[pyo3(signature = (addr, port=None, timeout_ms=None))]
+    fn detect_brand(addr: &str, port: Option<u16>, timeout_ms: Option<u64>) -> PyResult<String> {
+        get_runtime()
+            .block_on(Oscilloscope::detect_brand(
+                addr,
+                port.unwrap_or(5025),
+                timeout_ms.unwrap_or(5000),
+            ))
+            .map_err(to_pyerr)
+    }
+
+    #[staticmethod]
+    #[pyo3(signature = (addr, port=None, timeout_ms=None))]
+    fn from_ip(addr: &str, port: Option<u16>, timeout_ms: Option<u64>) -> PyResult<Self> {
+        let inner = get_runtime()
+            .block_on(Oscilloscope::from_ip(
+                addr,
+                port,
+                timeout_ms.unwrap_or(5000),
+            ))
+            .map_err(to_pyerr)?;
+        Ok(Self { inner })
     }
 
     #[staticmethod]
