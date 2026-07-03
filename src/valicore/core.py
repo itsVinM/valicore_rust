@@ -13,8 +13,9 @@ from valicore._rust import (
     compute_stats as _compute_stats,
     compute_thd as _compute_thd,
     cross_correlate as _cross_correlate,
-    py_oscilloscope_brands as _oscilloscope_brands,
 )
+
+Oscilloscope = _Oscilloscope
 
 
 class RustSignalProcessor:

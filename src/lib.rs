@@ -34,19 +34,20 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_run_campaign, m)?)?;
 
     // Oscilloscope
-    m.add_class::<PyOscilloscope>(m)?;
-    m.add_function(wrap_pyfunction!(py_oscilloscope_brands, m)?)?;
+    m.add_class::<PyOscilloscope>()?;
 
     Ok(())
 }
 
-// ── Oscilloscope (YAML-driven) ──────────────────────────────
+// ── Oscilloscope (YAML-driven, matching Python ScopeAutomation) ─
 
-fn to_pyerr(e: String) -> PyErr {
-    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e)
+use engine::oscilloscope::ScopeError;
+
+fn to_pyerr(e: ScopeError) -> PyErr {
+    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
 }
 
-#[pyclass]
+#[pyclass(name = "Oscilloscope")]
 struct PyOscilloscope {
     inner: Oscilloscope,
 }
@@ -54,6 +55,7 @@ struct PyOscilloscope {
 #[pymethods]
 impl PyOscilloscope {
     #[new]
+    #[pyo3(signature = (brand, timeout_ms=None))]
     fn new(brand: &str, timeout_ms: Option<u64>) -> PyResult<Self> {
         let inner = Oscilloscope::new(brand, timeout_ms.unwrap_or(5000)).map_err(to_pyerr)?;
         Ok(Self { inner })
@@ -67,6 +69,15 @@ impl PyOscilloscope {
         self.inner.is_connected()
     }
 
+    fn active_channels(&self) -> Vec<u8> {
+        self.inner.active_channels().to_vec()
+    }
+
+    fn instrument_id(&self) -> String {
+        self.inner.instrument_id().to_string()
+    }
+
+    #[pyo3(signature = (addr, port=None))]
     fn connect(&mut self, addr: &str, port: Option<u16>) -> PyResult<()> {
         get_runtime().block_on(self.inner.connect(addr, port.unwrap_or(5025))).map_err(to_pyerr)
     }
@@ -83,21 +94,47 @@ impl PyOscilloscope {
         get_runtime().block_on(self.inner.query(cmd)).map_err(to_pyerr)
     }
 
-    fn cmd(&self, name: &str, ch: Option<&str>, val: Option<&str>, edge: Option<&str>) -> PyResult<String> {
-        let mut subs = Vec::new();
-        if let Some(v) = ch { subs.push(("ch", v)); }
-        if let Some(v) = val { subs.push(("val", v)); }
-        if let Some(v) = edge { subs.push(("edge", v)); }
-        self.inner.cmd(name, &subs).map_err(to_pyerr)
+    fn query_binary(&mut self, cmd: &str) -> PyResult<Vec<f64>> {
+        get_runtime().block_on(self.inner.query_binary(cmd)).map_err(to_pyerr)
+    }
+
+    fn cmd(&self, name: &str, subs: Vec<(String, String)>) -> PyResult<String> {
+        let refs: Vec<(&str, &str)> = subs.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        self.inner.cmd(name, &refs).map_err(to_pyerr)
     }
 
     fn commands(&self) -> Vec<String> {
         self.inner.commands()
     }
 
-    fn get_waveform(&mut self, channel: &str) -> PyResult<Vec<f64>> {
-        get_runtime().block_on(self.inner.get_waveform(channel)).map_err(to_pyerr)
+    // ── Generic dispatch (maps from SETTINGS/GETTINGS) ────
+
+    #[staticmethod]
+    fn brands() -> Vec<String> {
+        Oscilloscope::brands()
     }
+
+    #[staticmethod]
+    fn available_settings() -> Vec<&'static str> {
+        Oscilloscope::available_settings()
+    }
+
+    #[staticmethod]
+    fn available_gettings() -> Vec<&'static str> {
+        Oscilloscope::available_gettings()
+    }
+
+    fn setting(&mut self, name: &str, kwargs: Vec<(String, String)>) -> PyResult<()> {
+        let refs: Vec<(&str, &str)> = kwargs.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        get_runtime().block_on(self.inner.setting(name, &refs)).map_err(to_pyerr)
+    }
+
+    fn getting(&mut self, name: &str, kwargs: Vec<(String, String)>) -> PyResult<String> {
+        let refs: Vec<(&str, &str)> = kwargs.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        get_runtime().block_on(self.inner.getting(name, &refs)).map_err(to_pyerr)
+    }
+
+    // ── Convenience setters ──────────────────────────────
 
     fn set_v_scale(&mut self, channel: &str, val: f64) -> PyResult<()> {
         get_runtime().block_on(self.inner.set_v_scale(channel, val)).map_err(to_pyerr)
@@ -119,16 +156,16 @@ impl PyOscilloscope {
         get_runtime().block_on(self.inner.set_h_pos(val)).map_err(to_pyerr)
     }
 
-    fn set_trig_source(&mut self, channel: &str, edge: Option<&str>) -> PyResult<()> {
-        get_runtime().block_on(self.inner.set_trig_source(channel, edge)).map_err(to_pyerr)
+    fn set_trig_source(&mut self, channel: &str) -> PyResult<()> {
+        get_runtime().block_on(self.inner.set_trig_source(channel)).map_err(to_pyerr)
     }
 
-    fn set_trig_level(&mut self, val: f64, edge: Option<&str>) -> PyResult<()> {
-        get_runtime().block_on(self.inner.set_trig_level(val, edge)).map_err(to_pyerr)
+    fn set_trig_level(&mut self, val: f64) -> PyResult<()> {
+        get_runtime().block_on(self.inner.set_trig_level(val)).map_err(to_pyerr)
     }
 
-    fn set_trig_slope(&mut self, val: &str, edge: Option<&str>) -> PyResult<()> {
-        get_runtime().block_on(self.inner.set_trig_slope(val, edge)).map_err(to_pyerr)
+    fn set_trig_slope(&mut self, val: &str) -> PyResult<()> {
+        get_runtime().block_on(self.inner.set_trig_slope(val)).map_err(to_pyerr)
     }
 
     fn set_ch_on(&mut self, channel: &str) -> PyResult<()> {
@@ -138,6 +175,8 @@ impl PyOscilloscope {
     fn set_ch_off(&mut self, channel: &str) -> PyResult<()> {
         get_runtime().block_on(self.inner.set_ch_off(channel)).map_err(to_pyerr)
     }
+
+    // ── Convenience getters ──────────────────────────────
 
     fn get_v_scale(&mut self, channel: &str) -> PyResult<f64> {
         get_runtime().block_on(self.inner.get_v_scale(channel)).map_err(to_pyerr)
@@ -159,17 +198,7 @@ impl PyOscilloscope {
         get_runtime().block_on(self.inner.get_h_pos()).map_err(to_pyerr)
     }
 
-    fn get_trig_source(&mut self) -> PyResult<String> {
-        get_runtime().block_on(self.inner.get_trig_source()).map_err(to_pyerr)
-    }
-
-    fn get_trig_level(&mut self) -> PyResult<f64> {
-        get_runtime().block_on(self.inner.get_trig_level()).map_err(to_pyerr)
-    }
-
-    fn get_trig_slope(&mut self) -> PyResult<String> {
-        get_runtime().block_on(self.inner.get_trig_slope()).map_err(to_pyerr)
-    }
+    // ── Actions ──────────────────────────────────────────
 
     fn reset(&mut self) -> PyResult<()> {
         get_runtime().block_on(self.inner.reset()).map_err(to_pyerr)
@@ -194,11 +223,17 @@ impl PyOscilloscope {
     fn check_ch(&mut self, channel: &str) -> PyResult<bool> {
         get_runtime().block_on(self.inner.check_ch(channel)).map_err(to_pyerr)
     }
-}
 
-#[pyfunction]
-fn py_oscilloscope_brands() -> Vec<String> {
-    Oscilloscope::brands()
+    // ── Waveform acquisition ─────────────────────────────
+
+    fn get_waveform(&mut self, channel: &str) -> PyResult<Vec<f64>> {
+        get_runtime().block_on(self.inner.get_waveform(channel)).map_err(to_pyerr)
+    }
+
+    fn get_all_waveforms(&mut self) -> PyResult<(Vec<f64>, Vec<Vec<f64>>, HashMap<String, String>)> {
+        let wf = get_runtime().block_on(self.inner.get_all_waveforms()).map_err(to_pyerr)?;
+        Ok((wf.time_axis, wf.data_matrix, wf.metadata))
+    }
 }
 
 // ── Signal processing (unchanged API) ──────────────────────

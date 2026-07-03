@@ -1,17 +1,26 @@
 from __future__ import annotations
 
 import csv
+import re
 import sys
 from pathlib import Path
 
 import click
 
 from valicore import __version__
+from valicore import Oscilloscope
 from valicore.core import RustSignalProcessor
 
 
-def _find_instruments() -> list[str]:
-    """List available VISA resources."""
+def _parse_address(resource: str) -> str:
+    """Extract IP address from VISA resource string or use bare IP."""
+    m = re.search(r"::(\d+\.\d+\.\d+\.\d+)::", resource)
+    if m:
+        return m.group(1)
+    return resource
+
+
+def _find_visa_resources() -> list[str]:
     try:
         import pyvisa
         rm = pyvisa.ResourceManager()
@@ -30,12 +39,19 @@ def cli() -> None:
 
 @cli.command()
 def resources() -> None:
-    """List available VISA instruments."""
+    """List available oscilloscope brands, drivers, and VISA resources."""
+    brands = Oscilloscope.brands()
+    click.echo("YAML oscilloscope brands:")
+    for b in brands:
+        click.echo(f"  {b}")
+
     from valicore.instruments import REGISTRY
-    click.echo("Drivers:")
-    for name in REGISTRY:
-        click.echo(f"  {name}")
-    visa = _find_instruments()
+    if REGISTRY:
+        click.echo("\nPython instrument drivers:")
+        for name in REGISTRY:
+            click.echo(f"  {name}")
+
+    visa = _find_visa_resources()
     if visa:
         click.echo("\nVISA resources:")
         for r in visa:
@@ -43,26 +59,32 @@ def resources() -> None:
 
 
 @cli.command()
-@click.option("--resource", "-r", required=True, help="VISA resource string")
-@click.option("--kind", "-k", default="rigol_ds1000z", help="Instrument driver")
-@click.option("--channel", "-c", default="CH1", help="Channel to capture")
-@click.option("--samples", "-n", default=10000, help="Number of samples")
+@click.option("--brand", "-b", default="RIGOL", help="Oscilloscope brand (from YAML spec)")
+@click.option("--resource", "-r", required=True, help="IP address or VISA resource string")
+@click.option("--port", "-p", default=5025, type=int, help="TCP port")
+@click.option("--channel", "-c", default="CH1", help="Channel to capture (e.g. CH1, 1)")
 @click.option("--output", "-o", default=None, help="Write samples to CSV")
 @click.option("--fft", is_flag=True, help="Print FFT peak frequency")
 @click.option("--stats", is_flag=True, help="Print signal stats")
-def capture(resource: str, kind: str, channel: str, samples: int, output: str | None, fft: bool, stats: bool) -> None:
+def capture(brand: str, resource: str, port: int, channel: str, output: str | None, fft: bool, stats: bool) -> None:
     """Capture waveform data from an oscilloscope."""
-    from valicore.instruments import create_instrument, REGISTRY
-
-    if kind not in REGISTRY:
-        click.echo(f"Unknown instrument: {kind}. Available: {', '.join(REGISTRY)}", err=True)
+    brands = Oscilloscope.brands()
+    if brand.upper() not in [b.upper() for b in brands]:
+        click.echo(f"Unknown brand: {brand}. Available: {', '.join(brands)}", err=True)
         sys.exit(1)
-    instr = create_instrument(kind, resource)
+
+    addr = _parse_address(resource)
+    scope = Oscilloscope(brand)
+
     try:
-        instr.connect()
-        data = instr.get_waveform(channel)
+        scope.connect(addr, port)
+        click.echo(f"Connected: {scope.instrument_id()}")
+        data = scope.get_waveform(channel)
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
     finally:
-        instr.close()
+        scope.close()
 
     click.echo(f"Captured {len(data)} samples from {channel}")
 
@@ -94,7 +116,6 @@ def capture(resource: str, kind: str, channel: str, samples: int, output: str | 
 @click.option("--thd", type=float, default=None, metavar="FREQ_HZ", help="Compute THD at fundamental frequency")
 def analyze(file: str, fft: bool, stats: bool, thd: float | None) -> None:
     """Analyze signal data from a CSV file (column: value)."""
-    import csv
     samples: list[float] = []
     with open(file) as f:
         reader = csv.DictReader(f)
@@ -118,6 +139,3 @@ def analyze(file: str, fft: bool, stats: bool, thd: float | None) -> None:
         sr = 1e6
         val = RustSignalProcessor.thd(samples, thd, sr)
         click.echo(f"THD: {val:.2f}%")
-
-
-
