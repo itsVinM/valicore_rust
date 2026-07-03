@@ -1,5 +1,5 @@
-from valicore.core import RustSignalProcessor
+from valicore.core import Oscilloscope, RustSignalProcessor
 
 __version__ = "0.1.0"
 
-__all__ = ["RustSignalProcessor"]
+__all__ = ["Oscilloscope", "RustSignalProcessor"]

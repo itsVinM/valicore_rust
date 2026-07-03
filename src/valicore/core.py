@@ -5,6 +5,7 @@ from typing import Any
 import numpy as np
 
 from valicore._rust import (
+    Oscilloscope as _Oscilloscope,
     apply_filter as _apply_filter,
     apply_window as _apply_window,
     compute_fft as _compute_fft,
@@ -12,6 +13,7 @@ from valicore._rust import (
     compute_stats as _compute_stats,
     compute_thd as _compute_thd,
     cross_correlate as _cross_correlate,
+    py_oscilloscope_brands as _oscilloscope_brands,
 )
 
 
