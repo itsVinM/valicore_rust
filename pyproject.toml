@@ -17,16 +17,15 @@ classifiers = [
     "Programming Language :: Rust",
 ]
 dependencies = [
-    "click>=8.1",
     "pyvisa>=1.14",
     "numpy>=1.24",
 ]
 
+[project.optional-dependencies]
+hdf5 = ["h5py>=3.0"]
+
 [project.urls]
 Homepage = "https://github.com/valicore/valicore"
-
-[project.scripts]
-valicore = "valicore.cli.main:cli"
 
 [tool.maturin]
 python-source = "src"

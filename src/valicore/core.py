@@ -1,10 +1,8 @@
 from __future__ import annotations
-
 from typing import Any
-
 import numpy as np
 
-# ── Rust extension (primary) ──────────────────────────────────
+# Rust extension (primary) 
 
 try:
     from valicore._rust import (
@@ -19,16 +17,16 @@ try:
     )
 
     _HAS_RUST = True
-except ImportError:
+except ImportError: 
     _HAS_RUST = False
 
-# ── Python fallback (when Rust extension unavailable) ──────────
+# Python fallback (when Rust extension unavailable) 
 
 if not _HAS_RUST:
     from valicore.driver._fallback import ScopeFallback as _PythonOscilloscope
 
 
-# ── Unified Oscilloscope export ────────────────────────────────
+# Unified Oscilloscope export
 
 def Oscilloscope(brand: str, timeout_ms: int | None = None):  # noqa: N802
     """Create an oscilloscope driver.
@@ -41,7 +39,7 @@ def Oscilloscope(brand: str, timeout_ms: int | None = None):  # noqa: N802
     return _PythonOscilloscope(brand, timeout_ms)
 
 
-# ── Signal processing (Rust-only, no fallback needed) ──────────
+# Signal processing (Rust-only, no fallback needed)
 
 class RustSignalProcessor:
     """High-performance signal processing backed by Rust via PyO3."""

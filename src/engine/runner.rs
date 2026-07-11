@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 use tokio::sync::Mutex;
 
 use super::campaign::{Limit, TestCampaign, TestStep};
-use super::instrument::{create_instrument, SCPIInstrument};
+use super::oscilloscope::{create_instrument, SCPIInstrument};
 
 fn check_limit(value: f64, limit: &Limit) -> bool {
     let tol = limit.tolerance.unwrap_or(1e-9);
@@ -256,4 +256,79 @@ pub fn run_campaign_stream(campaign: TestCampaign) -> impl Stream<Item = (String
     });
 
     UnboundedReceiverStream::new(rx)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn check_limit_eq() {
+        assert!(check_limit(3.3, &Limit { op: "eq".into(), value: 3.3, tolerance: Some(0.01) }));
+        assert!(!check_limit(3.4, &Limit { op: "eq".into(), value: 3.3, tolerance: Some(0.01) }));
+    }
+
+    #[test]
+    fn check_limit_within() {
+        assert!(check_limit(3.35, &Limit { op: "within".into(), value: 3.3, tolerance: Some(0.1) }));
+        assert!(!check_limit(3.5, &Limit { op: "within".into(), value: 3.3, tolerance: Some(0.1) }));
+    }
+
+    #[test]
+    fn check_limit_comparison_ops() {
+        let l = |op: &str| Limit { op: op.into(), value: 5.0, tolerance: None };
+        assert!(check_limit(4.0, &l("lt")));
+        assert!(!check_limit(6.0, &l("lt")));
+        assert!(check_limit(5.0, &l("le")));
+        assert!(check_limit(6.0, &l("gt")));
+        assert!(check_limit(5.0, &l("ge")));
+        assert!(check_limit(3.0, &l("ne")));
+        assert!(!check_limit(5.0, &l("ne")));
+    }
+
+    #[test]
+    fn evaluate_limits_all_pass() {
+        let limits = vec![
+            Limit { op: "gt".into(), value: 0.0, tolerance: None },
+            Limit { op: "lt".into(), value: 10.0, tolerance: None },
+        ];
+        assert_eq!(evaluate_limits(5.0, &limits), "passed");
+    }
+
+    #[test]
+    fn evaluate_limits_one_fail() {
+        let limits = vec![
+            Limit { op: "gt".into(), value: 0.0, tolerance: None },
+            Limit { op: "lt".into(), value: 3.0, tolerance: None },
+        ];
+        assert_eq!(evaluate_limits(5.0, &limits), "failed");
+    }
+
+    #[test]
+    fn parse_measurement_number() {
+        assert_eq!(parse_measurement("3.14"), 3.14);
+    }
+
+    #[test]
+    fn parse_measurement_csv_fallback() {
+        assert_eq!(parse_measurement("3.14,stuff"), 3.14);
+    }
+
+    #[test]
+    fn parse_measurement_garbage() {
+        assert_eq!(parse_measurement("not_a_number"), 0.0);
+    }
+
+    #[test]
+    fn format_summary_counts() {
+        let r = serde_json::json!({
+            "groups": {
+                "g1": { "steps": [{"status":"passed"}, {"status":"failed"}, {"status":"passed"}] },
+                "g2": { "steps": [{"status":"passed"}] },
+            }
+        });
+        let s = format_summary(&r);
+        assert!(s.contains("3/4 passed"));
+        assert!(s.contains("1 failed"));
+    }
 }

@@ -33,6 +33,10 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_campaign_info, m)?)?;
     m.add_function(wrap_pyfunction!(py_run_campaign, m)?)?;
 
+    // File export
+    m.add_function(wrap_pyfunction!(py_save_csv, m)?)?;
+    m.add_function(wrap_pyfunction!(py_save_h5, m)?)?;
+
     // Oscilloscope
     m.add_class::<PyOscilloscope>()?;
 
@@ -74,7 +78,7 @@ impl PyOscilloscope {
     }
 
     fn active_channels(&self) -> Vec<u8> {
-        self.inner.active_channels().to_vec()
+        self.inner.active_channels()
     }
 
     fn instrument_id(&self) -> String {
@@ -162,20 +166,6 @@ impl PyOscilloscope {
     fn getting(&mut self, name: &str, kwargs: Vec<(String, String)>) -> PyResult<String> {
         let refs: Vec<(&str, &str)> = kwargs.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
         get_runtime().block_on(self.inner.getting(name, &refs)).map_err(to_pyerr)
-    }
-
-    // ── Channel management (side-effects on active_channels) ──
-
-    fn set_ch_on(&mut self, channel: &str) -> PyResult<()> {
-        get_runtime().block_on(self.inner.set_ch_on(channel)).map_err(to_pyerr)
-    }
-
-    fn set_ch_off(&mut self, channel: &str) -> PyResult<()> {
-        get_runtime().block_on(self.inner.set_ch_off(channel)).map_err(to_pyerr)
-    }
-
-    fn check_ch(&mut self, channel: &str) -> PyResult<bool> {
-        get_runtime().block_on(self.inner.check_ch(channel)).map_err(to_pyerr)
     }
 
     // ── Actions (zero-arg commands) ──────────────────────
@@ -294,4 +284,65 @@ fn py_run_campaign(path: &str) -> PyResult<String> {
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))?;
 
     Ok(serde_json::to_string_pretty(&results).unwrap_or_default())
+}
+
+// ── File export ─────────────────────────────────────────────
+
+#[pyfunction]
+#[pyo3(signature = (path, time_axis, data_matrix, metadata=None, channel_labels=None))]
+fn py_save_csv(
+    path: &str,
+    time_axis: Vec<f64>,
+    data_matrix: Vec<Vec<f64>>,
+    metadata: Option<HashMap<String, String>>,
+    channel_labels: Option<Vec<String>>,
+) -> PyResult<String> {
+    let meta = metadata.unwrap_or_default();
+    let labels = channel_labels.unwrap_or_else(|| {
+        (0..data_matrix.len()).map(|i| format!("ch{}", i + 1)).collect()
+    });
+    engine::save::save_csv(
+        std::path::Path::new(path),
+        &time_axis,
+        &data_matrix,
+        &meta,
+        &labels,
+    )
+    .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e))
+}
+
+#[pyfunction]
+#[pyo3(signature = (path, time_axis, data_matrix, metadata=None, channel_labels=None))]
+fn py_save_h5(
+    path: &str,
+    time_axis: Vec<f64>,
+    data_matrix: Vec<Vec<f64>>,
+    metadata: Option<HashMap<String, String>>,
+    channel_labels: Option<Vec<String>>,
+) -> PyResult<String> {
+    let meta = metadata.unwrap_or_default();
+    let labels = channel_labels.unwrap_or_else(|| {
+        (0..data_matrix.len()).map(|i| format!("ch{}", i + 1)).collect()
+    });
+    engine::save::save_h5(
+        std::path::Path::new(path),
+        &time_axis,
+        &data_matrix,
+        &meta,
+        &labels,
+    )
+    .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runtime_singleton() {
+        let r1 = get_runtime();
+        let r2 = get_runtime();
+        // Both point to the same static
+        assert!(std::ptr::eq(r1, r2));
+    }
 }
