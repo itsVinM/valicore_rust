@@ -62,18 +62,20 @@ pub fn save_h5(
 ) -> Result<String, String> {
     use hdf5::File;
 
-    let file = File::create(path).map_err(|e| format!("create {path}: {e}"))?;
+    let file = File::create(path).map_err(|e| format!("create {}: {e}", path.display()))?;
 
     // Time dataset
     file.new_dataset_builder()
-        .create("time", time_axis)
+        .with_data(time_axis)
+        .create("time")
         .map_err(|e| format!("write time: {e}"))?;
 
     // Channel datasets
     for (i, label) in channel_labels.iter().enumerate() {
         if i < data_matrix.len() {
             file.new_dataset_builder()
-                .create(label.as_str(), data_matrix[i].as_slice())
+                .with_data(data_matrix[i].as_slice())
+                .create(label.as_str())
                 .map_err(|e| format!("write {label}: {e}"))?;
         }
     }
