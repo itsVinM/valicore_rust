@@ -319,7 +319,13 @@ impl Oscilloscope {
         keys
     }
 
-    /// Generic setter: looks up name in SETTINGS map, passes kwargs through to cmd().
+    // ── Generic dispatch (the __getattr__ trick) ────────────
+    //
+    // SETTINGS / GETTINGS map friendly names → YAML command keys.
+    // Callers use  scope.setting("vertical_scale", &[("ch","1"),("val","0.5")])
+    // instead of   scope.set_v_scale("1", 0.5)
+    // Adding a new knob = one line in SETTINGS or GETTINGS. Zero new methods.
+
     pub async fn setting(&mut self, name: &str, kwargs: &[(&str, &str)]) -> Result<(), ScopeError> {
         let (cmd_key, _) = find_setting(name)
             .ok_or_else(|| ScopeError::Config(format!("unknown setting '{name}'")))?;
@@ -327,7 +333,6 @@ impl Oscilloscope {
         self.write(&cmd).await
     }
 
-    /// Generic getter: looks up name in GETTINGS map, passes kwargs through to cmd().
     pub async fn getting(&mut self, name: &str, kwargs: &[(&str, &str)]) -> Result<String, ScopeError> {
         let (cmd_key, _) = find_getting(name)
             .ok_or_else(|| ScopeError::Config(format!("unknown getting '{name}'")))?;
@@ -343,47 +348,7 @@ impl Oscilloscope {
         GETTINGS.iter().map(|(n, _, _)| *n).collect()
     }
 
-    // ── Convenience setters ────────────────────────────────
-
-    pub async fn set_v_scale(&mut self, channel: &str, val: f64) -> Result<(), ScopeError> {
-        let cmd = self.cmd("set_v_scale", &[("ch", channel), ("val", &fmt_val(val))])?;
-        self.write(&cmd).await
-    }
-
-    pub async fn set_v_offset(&mut self, channel: &str, val: f64) -> Result<(), ScopeError> {
-        let cmd = self.cmd("set_v_offset", &[("ch", channel), ("val", &fmt_val(val))])?;
-        self.write(&cmd).await
-    }
-
-    pub async fn set_coupling(&mut self, channel: &str, val: &str) -> Result<(), ScopeError> {
-        let cmd = self.cmd("set_coupling", &[("ch", channel), ("val", val)])?;
-        self.write(&cmd).await
-    }
-
-    pub async fn set_h_scale(&mut self, val: f64) -> Result<(), ScopeError> {
-        let cmd = self.cmd("set_h_scale", &[("val", &fmt_val(val))])?;
-        self.write(&cmd).await
-    }
-
-    pub async fn set_h_pos(&mut self, val: f64) -> Result<(), ScopeError> {
-        let cmd = self.cmd("set_h_pos", &[("val", &fmt_val(val))])?;
-        self.write(&cmd).await
-    }
-
-    pub async fn set_trig_source(&mut self, channel: &str) -> Result<(), ScopeError> {
-        let cmd = self.cmd("set_trig_source", &[("ch", channel)])?;
-        self.write(&cmd).await
-    }
-
-    pub async fn set_trig_level(&mut self, val: f64) -> Result<(), ScopeError> {
-        let cmd = self.cmd("set_trig_level", &[("val", &fmt_val(val))])?;
-        self.write(&cmd).await
-    }
-
-    pub async fn set_trig_slope(&mut self, val: &str) -> Result<(), ScopeError> {
-        let cmd = self.cmd("set_trig_slope", &[("val", val)])?;
-        self.write(&cmd).await
-    }
+    // ── Channel management (has side-effects, kept explicit) ──
 
     pub async fn set_ch_on(&mut self, channel: &str) -> Result<(), ScopeError> {
         let cmd = self.cmd("set_ch_on", &[("ch", channel)])?;
@@ -405,38 +370,14 @@ impl Oscilloscope {
         Ok(())
     }
 
-    // ── Convenience getters ────────────────────────────────
-
-    pub async fn get_v_scale(&mut self, channel: &str) -> Result<f64, ScopeError> {
-        let cmd = self.cmd("get_v_scale", &[("ch", channel)])?;
+    pub async fn check_ch(&mut self, channel: &str) -> Result<bool, ScopeError> {
+        let cmd = self.cmd("check_ch", &[("ch", channel)])?;
         let resp = self.query(&cmd).await?;
-        resp.trim().parse().map_err(|e| ScopeError::Acquisition(format!("parse '{resp}': {e}")))
+        let t = resp.trim();
+        Ok(t == "1" || t.eq_ignore_ascii_case("ON"))
     }
 
-    pub async fn get_v_offset(&mut self, channel: &str) -> Result<f64, ScopeError> {
-        let cmd = self.cmd("get_v_offset", &[("ch", channel)])?;
-        let resp = self.query(&cmd).await?;
-        resp.trim().parse().map_err(|e| ScopeError::Acquisition(format!("parse '{resp}': {e}")))
-    }
-
-    pub async fn get_coupling(&mut self, channel: &str) -> Result<String, ScopeError> {
-        let cmd = self.cmd("get_coupling", &[("ch", channel)])?;
-        self.query(&cmd).await
-    }
-
-    pub async fn get_h_scale(&mut self) -> Result<f64, ScopeError> {
-        let cmd = self.cmd("get_h_scale", &[])?;
-        let resp = self.query(&cmd).await?;
-        resp.trim().parse().map_err(|e| ScopeError::Acquisition(format!("parse '{resp}': {e}")))
-    }
-
-    pub async fn get_h_pos(&mut self) -> Result<f64, ScopeError> {
-        let cmd = self.cmd("get_h_pos", &[])?;
-        let resp = self.query(&cmd).await?;
-        resp.trim().parse().map_err(|e| ScopeError::Acquisition(format!("parse '{resp}': {e}")))
-    }
-
-    // ── Actions ──────────────────────────────────────────────
+    // ── Actions (zero-arg commands via cmd()) ──────────────
 
     pub async fn reset(&mut self) -> Result<(), ScopeError> {
         let cmd = self.cmd("reset", &[])?;
@@ -461,13 +402,6 @@ impl Oscilloscope {
     pub async fn single(&mut self) -> Result<(), ScopeError> {
         let cmd = self.cmd("single", &[])?;
         self.write(&cmd).await
-    }
-
-    pub async fn check_ch(&mut self, channel: &str) -> Result<bool, ScopeError> {
-        let cmd = self.cmd("check_ch", &[("ch", channel)])?;
-        let resp = self.query(&cmd).await?;
-        let t = resp.trim();
-        Ok(t == "1" || t.eq_ignore_ascii_case("ON"))
     }
 
     // ── Waveform acquisition ──────────────────────────────────

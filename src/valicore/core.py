@@ -4,19 +4,44 @@ from typing import Any
 
 import numpy as np
 
-from valicore._rust import (
-    Oscilloscope as _Oscilloscope,
-    apply_filter as _apply_filter,
-    apply_window as _apply_window,
-    compute_fft as _compute_fft,
-    compute_psd as _compute_psd,
-    compute_stats as _compute_stats,
-    compute_thd as _compute_thd,
-    cross_correlate as _cross_correlate,
-)
+# ── Rust extension (primary) ──────────────────────────────────
 
-Oscilloscope = _Oscilloscope
+try:
+    from valicore._rust import (
+        Oscilloscope as _RustOscilloscope,
+        apply_filter as _apply_filter,
+        apply_window as _apply_window,
+        compute_fft as _compute_fft,
+        compute_psd as _compute_psd,
+        compute_stats as _compute_stats,
+        compute_thd as _compute_thd,
+        cross_correlate as _cross_correlate,
+    )
 
+    _HAS_RUST = True
+except ImportError:
+    _HAS_RUST = False
+
+# ── Python fallback (when Rust extension unavailable) ──────────
+
+if not _HAS_RUST:
+    from valicore.driver._fallback import ScopeFallback as _PythonOscilloscope
+
+
+# ── Unified Oscilloscope export ────────────────────────────────
+
+def Oscilloscope(brand: str, timeout_ms: int | None = None):  # noqa: N802
+    """Create an oscilloscope driver.
+
+    Returns the Rust Oscilloscope when the compiled extension is available,
+    otherwise falls back to the pyvisa-based Python driver.
+    """
+    if _HAS_RUST:
+        return _RustOscilloscope(brand, timeout_ms)
+    return _PythonOscilloscope(brand, timeout_ms)
+
+
+# ── Signal processing (Rust-only, no fallback needed) ──────────
 
 class RustSignalProcessor:
     """High-performance signal processing backed by Rust via PyO3."""

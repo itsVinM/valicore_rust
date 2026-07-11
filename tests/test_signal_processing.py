@@ -19,7 +19,7 @@ class TestRustSignalProcessor:
     """
     def test_fft(self, sine_wave) -> None:
         samples, sample_rate = sine_wave
-        result = RustSignalProcessor.fft(samples, sample_rate)
+        result : dict[str, list[float]] = RustSignalProcessor.fft(samples, sample_rate)
         assert "frequencies_hz" in result
         assert "magnitudes" in result
         assert len(result["frequencies_hz"]) == len(samples) // 2

@@ -164,39 +164,7 @@ impl PyOscilloscope {
         get_runtime().block_on(self.inner.getting(name, &refs)).map_err(to_pyerr)
     }
 
-    // ── Convenience setters ──────────────────────────────
-
-    fn set_v_scale(&mut self, channel: &str, val: f64) -> PyResult<()> {
-        get_runtime().block_on(self.inner.set_v_scale(channel, val)).map_err(to_pyerr)
-    }
-
-    fn set_v_offset(&mut self, channel: &str, val: f64) -> PyResult<()> {
-        get_runtime().block_on(self.inner.set_v_offset(channel, val)).map_err(to_pyerr)
-    }
-
-    fn set_coupling(&mut self, channel: &str, val: &str) -> PyResult<()> {
-        get_runtime().block_on(self.inner.set_coupling(channel, val)).map_err(to_pyerr)
-    }
-
-    fn set_h_scale(&mut self, val: f64) -> PyResult<()> {
-        get_runtime().block_on(self.inner.set_h_scale(val)).map_err(to_pyerr)
-    }
-
-    fn set_h_pos(&mut self, val: f64) -> PyResult<()> {
-        get_runtime().block_on(self.inner.set_h_pos(val)).map_err(to_pyerr)
-    }
-
-    fn set_trig_source(&mut self, channel: &str) -> PyResult<()> {
-        get_runtime().block_on(self.inner.set_trig_source(channel)).map_err(to_pyerr)
-    }
-
-    fn set_trig_level(&mut self, val: f64) -> PyResult<()> {
-        get_runtime().block_on(self.inner.set_trig_level(val)).map_err(to_pyerr)
-    }
-
-    fn set_trig_slope(&mut self, val: &str) -> PyResult<()> {
-        get_runtime().block_on(self.inner.set_trig_slope(val)).map_err(to_pyerr)
-    }
+    // ── Channel management (side-effects on active_channels) ──
 
     fn set_ch_on(&mut self, channel: &str) -> PyResult<()> {
         get_runtime().block_on(self.inner.set_ch_on(channel)).map_err(to_pyerr)
@@ -206,29 +174,11 @@ impl PyOscilloscope {
         get_runtime().block_on(self.inner.set_ch_off(channel)).map_err(to_pyerr)
     }
 
-    // ── Convenience getters ──────────────────────────────
-
-    fn get_v_scale(&mut self, channel: &str) -> PyResult<f64> {
-        get_runtime().block_on(self.inner.get_v_scale(channel)).map_err(to_pyerr)
+    fn check_ch(&mut self, channel: &str) -> PyResult<bool> {
+        get_runtime().block_on(self.inner.check_ch(channel)).map_err(to_pyerr)
     }
 
-    fn get_v_offset(&mut self, channel: &str) -> PyResult<f64> {
-        get_runtime().block_on(self.inner.get_v_offset(channel)).map_err(to_pyerr)
-    }
-
-    fn get_coupling(&mut self, channel: &str) -> PyResult<String> {
-        get_runtime().block_on(self.inner.get_coupling(channel)).map_err(to_pyerr)
-    }
-
-    fn get_h_scale(&mut self) -> PyResult<f64> {
-        get_runtime().block_on(self.inner.get_h_scale()).map_err(to_pyerr)
-    }
-
-    fn get_h_pos(&mut self) -> PyResult<f64> {
-        get_runtime().block_on(self.inner.get_h_pos()).map_err(to_pyerr)
-    }
-
-    // ── Actions ──────────────────────────────────────────
+    // ── Actions (zero-arg commands) ──────────────────────
 
     fn reset(&mut self) -> PyResult<()> {
         get_runtime().block_on(self.inner.reset()).map_err(to_pyerr)
@@ -248,10 +198,6 @@ impl PyOscilloscope {
 
     fn single(&mut self) -> PyResult<()> {
         get_runtime().block_on(self.inner.single()).map_err(to_pyerr)
-    }
-
-    fn check_ch(&mut self, channel: &str) -> PyResult<bool> {
-        get_runtime().block_on(self.inner.check_ch(channel)).map_err(to_pyerr)
     }
 
     // ── Waveform acquisition ─────────────────────────────
