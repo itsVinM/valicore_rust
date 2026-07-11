@@ -4,6 +4,7 @@ mod windowing;
 
 pub use fft::fft_analysis;
 pub use fft::psd;
+pub use fft::psd_vectorized;
 pub use fft::thd;
 pub use statistics::compute_stats;
 pub use windowing::apply_filter;

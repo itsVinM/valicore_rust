@@ -221,3 +221,39 @@ pub fn format_summary(results: &Value) -> String {
         .unwrap_or(0);
     format!("{}/{} passed, {} failed", total - failed, total, failed)
 }
+
+use tokio_stream::wrappers::UnboundedReceiverStream;
+use tokio_stream::Stream;
+
+pub fn run_campaign_stream(campaign: TestCampaign) -> impl Stream<Item = (String, Value)> {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+
+    tokio::spawn(async move {
+        let pool: InstrumentMap = Arc::new(Mutex::new(HashMap::new()));
+
+        for (group_name, group) in &campaign.groups {
+            let mut steps = Vec::new();
+            for step in &group.steps {
+                let result = run_step(step, &campaign, &pool).await;
+                steps.push(result);
+            }
+
+            let status = if steps.iter().any(|s| s["status"] == "failed") {
+                "failed"
+            } else {
+                "passed"
+            };
+
+            let group_result = json!({
+                "name": group.name,
+                "description": group.description,
+                "status": status,
+                "steps": steps,
+            });
+
+            let _ = tx.send((group_name.clone(), group_result));
+        }
+    });
+
+    UnboundedReceiverStream::new(rx)
+}

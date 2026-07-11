@@ -1,5 +1,50 @@
 use std::f64::consts::PI;
 
+// ── Const-generic window functions (compile-time size) ──
+
+pub fn hamming_window<const N: usize>() -> [f64; N] {
+    assert!(N > 1, "window size must be > 1");
+    let mut w = [0.0; N];
+    for (i, item) in w.iter_mut().enumerate() {
+        *item = 0.54 - 0.46 * (2.0 * PI * i as f64 / (N - 1) as f64).cos();
+    }
+    w
+}
+
+pub fn hann_window<const N: usize>() -> [f64; N] {
+    assert!(N > 1, "window size must be > 1");
+    let mut w = [0.0; N];
+    for (i, item) in w.iter_mut().enumerate() {
+        *item = 0.5 * (1.0 - (2.0 * PI * i as f64 / (N - 1) as f64).cos());
+    }
+    w
+}
+
+pub fn blackman_window<const N: usize>() -> [f64; N] {
+    assert!(N > 1, "window size must be > 1");
+    let mut w = [0.0; N];
+    for (i, item) in w.iter_mut().enumerate() {
+        *item = 0.42 - 0.5 * (2.0 * PI * i as f64 / (N - 1) as f64).cos()
+            + 0.08 * (4.0 * PI * i as f64 / (N - 1) as f64).cos();
+    }
+    w
+}
+
+pub fn flat_top_window<const N: usize>() -> [f64; N] {
+    assert!(N > 1, "window size must be > 1");
+    let mut w = [0.0; N];
+    for (i, item) in w.iter_mut().enumerate() {
+        *item = 0.21557895
+            - 0.41663158 * (2.0 * PI * i as f64 / (N - 1) as f64).cos()
+            + 0.277263158 * (4.0 * PI * i as f64 / (N - 1) as f64).cos()
+            - 0.083578947 * (6.0 * PI * i as f64 / (N - 1) as f64).cos()
+            + 0.006947368 * (8.0 * PI * i as f64 / (N - 1) as f64).cos();
+    }
+    w
+}
+
+// ── Runtime windowing (existing API) ──
+
 pub fn apply_window(samples: &[f64], window_type: &str) -> Result<Vec<f64>, String> {
     if samples.is_empty() {
         return Err("empty signal".into());

@@ -8,8 +8,6 @@ COPY Cargo.toml Cargo.lock ./
 COPY src/ src/
 COPY pyproject.toml ./
 
-RUN cargo build --release
-
 FROM python:3.12-slim-bookworm
 
 RUN pip install --no-cache-dir maturin>=1.0
