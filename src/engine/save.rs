@@ -80,11 +80,13 @@ pub fn save_h5(
         }
     }
 
-    // Metadata as attributes
-    let grp = file.group("/").map_err(|e| format!("root group: {e}"))?;
+    // Metadata as a group of string datasets
+    let meta_grp = file.create_group("metadata").map_err(|e| format!("group metadata: {e}"))?;
     for (k, v) in metadata {
-        grp.attr(k.as_str())
-            .and_then(|a| a.write_scalar(v))
+        let bytes = v.as_bytes();
+        meta_grp.new_dataset_builder()
+            .with_data(bytes)
+            .create(k.as_str())
             .map_err(|e| format!("attr {k}: {e}"))?;
     }
 
@@ -160,6 +162,29 @@ mod tests {
         save_csv(&path, &time, &data, &HashMap::new(), &["x".into()]).unwrap();
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(!content.contains("#"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[cfg(feature = "hdf5")]
+    #[test]
+    fn h5_roundtrip() {
+        let (time, data, meta, labels) = test_data();
+        let path = std::env::temp_dir().join("valicore_test.h5");
+        let result = save_h5(&path, &time, &data, &meta, &labels);
+        if let Err(ref e) = result {
+            eprintln!("save_h5 error: {e}");
+        }
+        assert!(result.is_ok());
+
+        let file = hdf5::File::open(&path).unwrap();
+        assert!(file.dataset("time").is_ok());
+        assert!(file.dataset("ch1").is_ok());
+        assert!(file.dataset("ch2").is_ok());
+        assert!(file.group("metadata").is_ok());
+
+        let ds = file.dataset("time").unwrap();
+        assert_eq!(ds.shape(), vec![3]);
+
         let _ = std::fs::remove_file(&path);
     }
 }
