@@ -1,5 +1,7 @@
 use std::f64::consts::PI;
 
+use rayon::prelude::*;
+
 // ── Single window function with a macro ────────────────────
 // Every window is just: f(i / (N-1)). The macro eliminates
 // the copy-paste between const-generic and runtime versions.
@@ -103,19 +105,18 @@ pub fn cross_correlation(a: &[f64], b: &[f64]) -> Vec<f64> {
     let n = a.len();
     let mean_a = a.iter().sum::<f64>() / n as f64;
     let mean_b = b.iter().sum::<f64>() / n as f64;
-    let mut result = vec![0.0; n];
 
-    // Precompute centered b once
     let bc: Vec<f64> = b.iter().map(|v| v - mean_b).collect();
+    let ac: Vec<f64> = a.iter().map(|v| v - mean_a).collect();
 
-    for shift in 0..n {
-        let len = n - shift;
-        let sum: f64 = (0..len)
-            .map(|i| (a[i] - mean_a) * bc[i + shift])
-            .sum();
-        result[shift] = sum / len as f64;
-    }
-    result
+    (0..n)
+        .into_par_iter()
+        .map(|shift| {
+            let len = n - shift;
+            let sum: f64 = (0..len).map(|i| ac[i] * bc[i + shift]).sum();
+            sum / len as f64
+        })
+        .collect()
 }
 
 #[cfg(test)]

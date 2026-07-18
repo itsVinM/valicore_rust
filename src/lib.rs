@@ -24,6 +24,7 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(compute_fft, m)?)?;
     m.add_function(wrap_pyfunction!(compute_psd, m)?)?;
     m.add_function(wrap_pyfunction!(compute_stats, m)?)?;
+    m.add_function(wrap_pyfunction!(compute_stats_parallel, m)?)?;
     m.add_function(wrap_pyfunction!(apply_window, m)?)?;
     m.add_function(wrap_pyfunction!(apply_filter, m)?)?;
     m.add_function(wrap_pyfunction!(compute_thd, m)?)?;
@@ -119,8 +120,8 @@ impl PyOscilloscope {
     // ── Generic dispatch (maps from SETTINGS/GETTINGS) ────
 
     #[staticmethod]
-    fn brands() -> Vec<String> {
-        Oscilloscope::brands()
+    fn brands() -> PyResult<Vec<String>> {
+        Oscilloscope::brands().map_err(to_pyerr)
     }
 
     #[staticmethod]
@@ -221,6 +222,11 @@ fn compute_psd(samples: Vec<f64>, sample_rate: f64) -> PyResult<Vec<Vec<f64>>> {
 #[pyfunction]
 fn compute_stats(samples: Vec<f64>) -> PyResult<HashMap<String, f64>> {
     Ok(signal::compute_stats(&samples))
+}
+
+#[pyfunction]
+fn compute_stats_parallel(samples: Vec<f64>) -> PyResult<HashMap<String, f64>> {
+    Ok(signal::compute_stats_parallel(&samples))
 }
 
 #[pyfunction]

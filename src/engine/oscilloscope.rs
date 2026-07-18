@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::fmt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
@@ -23,26 +22,17 @@ pub enum InstrumentError {
     Closed,
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum ScopeError {
+    #[error("connection: {0}")]
     Connection(String),
+    #[error("acquisition: {0}")]
     Acquisition(String),
+    #[error("config: {0}")]
     Config(String),
+    #[error("io: {0}")]
     Io(String),
 }
-
-impl fmt::Display for ScopeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Connection(m) => write!(f, "connection: {m}"),
-            Self::Acquisition(m) => write!(f, "acquisition: {m}"),
-            Self::Config(m) => write!(f, "config: {m}"),
-            Self::Io(m) => write!(f, "io: {m}"),
-        }
-    }
-}
-
-impl std::error::Error for ScopeError {}
 
 pub fn fmt_endpoint(addr: &str, port: u16, buf: &mut [u8; 48]) -> usize {
     let ab = addr.as_bytes();
@@ -282,10 +272,14 @@ impl Oscilloscope {
         serde_yaml::from_str(yaml).map_err(|e| format!("YAML parse: {e}"))
     }
 
-    pub fn brands() -> Vec<String> {
-        let mut b: Vec<_> = Self::load_library().unwrap().scopes.into_keys().collect();
+    pub fn brands() -> Result<Vec<String>, ScopeError> {
+        let mut b: Vec<_> = Self::load_library()
+            .map_err(ScopeError::Config)?
+            .scopes
+            .into_keys()
+            .collect();
         b.sort();
-        b
+        Ok(b)
     }
 
     pub fn info(brand: &str) -> Result<String, String> {
@@ -340,7 +334,8 @@ impl Oscilloscope {
     pub fn new(brand: &str, timeout_ms: u64) -> Result<Self, ScopeError> {
         let lib = Self::load_library().map_err(ScopeError::Config)?;
         let spec = lib.scopes.get(brand).cloned().ok_or_else(|| {
-            let avail = Self::brands();
+            let mut avail: Vec<_> = lib.scopes.keys().cloned().collect();
+            avail.sort();
             ScopeError::Config(format!("unknown brand '{brand}', available: {}", avail.join(", ")))
         })?;
         let port = lib.ip_config.as_ref().map(|c| c.port).unwrap_or(5025);
@@ -382,11 +377,13 @@ impl Oscilloscope {
         self.active = ChannelMask::default();
         for ch in 1..=4 {
             let cs = [b'0' + ch];
-            if let Ok(cmd) = self.cmd("check_ch", &[("ch", core::str::from_utf8(&cs).unwrap())]) {
-                if let Ok(resp) = self.query(&cmd).await {
-                    let t = resp.trim();
-                    if t == "1" || t.eq_ignore_ascii_case("ON") {
-                        self.active.set(ch);
+            if let Ok(ch_str) = core::str::from_utf8(&cs) {
+                if let Ok(cmd) = self.cmd("check_ch", &[("ch", ch_str)]) {
+                    if let Ok(resp) = self.query(&cmd).await {
+                        let t = resp.trim();
+                        if t == "1" || t.eq_ignore_ascii_case("ON") {
+                            self.active.set(ch);
+                        }
                     }
                 }
             }
@@ -533,7 +530,10 @@ impl Oscilloscope {
 
         for ch in self.active {
             let cs = [b'0' + ch];
-            let ch_str = core::str::from_utf8(&cs).unwrap();
+            let ch_str = match core::str::from_utf8(&cs) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
             if self.spec.cmds.contains_key("set_source") {
                 if let Ok(cmd) = self.cmd("set_source", &[("ch", ch_str)]) { let _ = self.write_cmd(&cmd).await; }
             }
@@ -673,7 +673,7 @@ mod tests {
     // Scope library
     #[test]
     fn brands_load() {
-        let b = Oscilloscope::brands();
+        let b = Oscilloscope::brands().unwrap();
         assert!(b.len() > 0);
         assert!(b.windows(2).all(|w| w[0] <= w[1]));
     }
