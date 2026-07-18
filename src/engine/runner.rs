@@ -3,8 +3,13 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
+use tracing::{debug, error, info, instrument};
 
 use super::campaign::{Limit, TestCampaign, TestStep};
+use super::observability::{
+    record_campaign_completed, record_campaign_started, record_instrument_connected,
+    record_step_completed, record_tcp_query,
+};
 use super::oscilloscope::{create_instrument, SCPIInstrument};
 
 fn check_limit(value: f64, limit: &Limit) -> bool {
@@ -43,6 +48,7 @@ fn parse_measurement(response: &str) -> f64 {
 
 type InstrumentMap = Arc<Mutex<HashMap<String, Box<dyn SCPIInstrument>>>>;
 
+#[instrument(skip(pool), fields(instrument = %step_instr_name))]
 async fn ensure_instrument(
     step_instr_name: &str,
     campaign: &TestCampaign,
@@ -50,6 +56,7 @@ async fn ensure_instrument(
 ) -> Result<(), String> {
     let mut map = pool.lock().await;
     if map.contains_key(step_instr_name) {
+        debug!("instrument already connected");
         return Ok(());
     }
     let config = campaign
@@ -63,22 +70,34 @@ async fn ensure_instrument(
         .connect()
         .await
         .map_err(|e| format!("connect {}: {}", step_instr_name, e))?;
+    
+    info!("instrument connected");
+    record_instrument_connected();
     map.insert(step_instr_name.to_string(), instr);
     Ok(())
 }
 
+#[instrument(skip(pool), fields(instrument = %step_instr_name, command = %cmd))]
 async fn query_instrument(
     step_instr_name: &str,
     cmd: &str,
     pool: &InstrumentMap,
 ) -> Result<String, String> {
+    let start = std::time::Instant::now();
     let mut map = pool.lock().await;
     let instr = map
         .get_mut(step_instr_name)
         .ok_or_else(|| format!("instrument '{}' not connected", step_instr_name))?;
-    instr.query(cmd).await.map_err(|e| format!("query error: {}", e))
+    let result = instr.query(cmd).await.map_err(|e| format!("query error: {}", e));
+    let duration = start.elapsed().as_secs_f64();
+    
+    record_tcp_query(duration);
+    debug!(duration_secs = duration, "SCPI query completed");
+    
+    result
 }
 
+#[instrument(skip(campaign, pool), fields(step = %step.name, group))]
 async fn run_step(
     step: &TestStep,
     campaign: &TestCampaign,
@@ -93,15 +112,18 @@ async fn run_step(
     });
 
     if let Err(e) = ensure_instrument(&step.instrument, campaign, pool).await {
+        error!(error = %e, "instrument setup failed");
         if let Some(obj) = step_result.as_object_mut() {
             obj.insert("status".into(), json!("failed"));
             obj.insert("error".into(), json!(e));
         }
+        record_step_completed(false);
         return step_result;
     }
 
     for _ in 0..step.repeat {
         if step.delay_ms > 0 {
+            debug!(delay_ms = step.delay_ms, "waiting before step");
             tokio::time::sleep(tokio::time::Duration::from_millis(step.delay_ms)).await;
         }
 
@@ -109,10 +131,12 @@ async fn run_step(
         let response = match query_instrument(&step.instrument, cmd, pool).await {
             Ok(r) => r,
             Err(e) => {
+                error!(error = %e, "query failed");
                 if let Some(obj) = step_result.as_object_mut() {
                     obj.insert("status".into(), json!("failed"));
                     obj.insert("error".into(), json!(e));
                 }
+                record_step_completed(false);
                 return step_result;
             }
         };
@@ -123,6 +147,8 @@ async fn run_step(
                 .limits
                 .as_ref()
                 .map_or("passed", |l| evaluate_limits(value, l));
+
+            debug!(measurement = %meas.name, value = value, verdict = verdict);
 
             let meas_result = json!({
                 "name": meas.name,
@@ -151,14 +177,25 @@ async fn run_step(
         }
     }
 
+    let passed = step_result["status"] == "passed";
+    record_step_completed(passed);
     step_result
 }
 
 pub async fn run_campaign(campaign: &TestCampaign) -> Result<Value, String> {
+    info!(
+        title = %campaign.title,
+        groups = campaign.groups.len(),
+        "starting campaign"
+    );
+    record_campaign_started();
+
     let pool: InstrumentMap = Arc::new(Mutex::new(HashMap::new()));
     let mut groups = serde_json::Map::new();
 
     for (group_name, group) in &campaign.groups {
+        info!(group = %group_name, steps = group.steps.len(), "running group");
+        
         let mut steps = Vec::new();
         for step in &group.steps {
             let result = run_step(step, campaign, &pool).await;
@@ -170,6 +207,8 @@ pub async fn run_campaign(campaign: &TestCampaign) -> Result<Value, String> {
         } else {
             "passed"
         };
+
+        info!(group = %group_name, status = status, "group completed");
 
         groups.insert(
             group_name.clone(),
@@ -187,6 +226,9 @@ pub async fn run_campaign(campaign: &TestCampaign) -> Result<Value, String> {
         .unwrap_or_default()
         .as_secs();
 
+    let all_passed = !groups.values().any(|g| g["status"] == "failed");
+    record_campaign_completed(all_passed);
+
     let results = json!({
         "title": campaign.title,
         "version": campaign.version.as_deref().unwrap_or("1.0"),
@@ -194,6 +236,7 @@ pub async fn run_campaign(campaign: &TestCampaign) -> Result<Value, String> {
         "groups": groups,
     });
 
+    info!(summary = %format_summary(&results), "campaign completed");
     Ok(results)
 }
 

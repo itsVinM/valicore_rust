@@ -1,0 +1,28 @@
+services:
+  valicore:
+    build:
+      context: .
+      dockerfile: Containerfile
+    container_name: valicore
+    volumes:
+      - .:/app
+    ports:
+      - "9090:9090"
+    environment:
+      - RUST_LOG=valicore_rs=info
+      - VALICORE_METRICS_ADDR=0.0.0.0:9090
+    working_dir: /app
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: valicore-prometheus
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    depends_on:
+      - valicore
+
+volumes:
+  prometheus-data:

@@ -4,8 +4,10 @@ mod signal;
 use std::collections::HashMap;
 
 use pyo3::prelude::*;
+use tracing::info_span;
 
 use engine::campaign::TestCampaign;
+use engine::observability::record_signal_processing;
 use engine::oscilloscope::Oscilloscope;
 use engine::runner;
 
@@ -20,6 +22,25 @@ fn get_runtime() -> &'static tokio::runtime::Runtime {
 
 #[pymodule]
 fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // Initialize tracing (env-filter reads RUST_LOG)
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_target(false)
+        .try_init();
+
+    // Initialize metrics
+    engine::observability::init_metrics();
+
+    // Start observability HTTP server (health + metrics endpoints)
+    if let Ok(addr) = std::env::var("VALICORE_METRICS_ADDR") {
+        if let Ok(socket_addr) = addr.parse() {
+            let rt = get_runtime();
+            rt.block_on(async {
+                engine::observability::start_http_server(socket_addr);
+            });
+        }
+    }
+
     // Signal processing
     m.add_function(wrap_pyfunction!(compute_fft, m)?)?;
     m.add_function(wrap_pyfunction!(compute_psd, m)?)?;
@@ -37,6 +58,10 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // File export
     m.add_function(wrap_pyfunction!(py_save_csv, m)?)?;
     m.add_function(wrap_pyfunction!(py_save_h5, m)?)?;
+
+    // Observability
+    m.add_function(wrap_pyfunction!(py_metrics_snapshot, m)?)?;
+    m.add_function(wrap_pyfunction!(py_health_check, m)?)?;
 
     // Oscilloscope
     m.add_class::<PyOscilloscope>()?;
@@ -207,21 +232,37 @@ impl PyOscilloscope {
 
 #[pyfunction]
 fn compute_fft(samples: Vec<f64>, sample_rate: f64) -> PyResult<Vec<Vec<f64>>> {
+    let _span = info_span!("compute_fft", samples = samples.len()).entered();
+    let start = std::time::Instant::now();
+    
     let result = signal::fft_analysis(&samples, sample_rate)
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e))?;
+    
+    record_signal_processing(start.elapsed().as_secs_f64(), "fft");
     Ok(result)
 }
 
 #[pyfunction]
 fn compute_psd(samples: Vec<f64>, sample_rate: f64) -> PyResult<Vec<Vec<f64>>> {
+    let _span = info_span!("compute_psd", samples = samples.len()).entered();
+    let start = std::time::Instant::now();
+    
     let result = signal::psd(&samples, sample_rate)
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e))?;
+    
+    record_signal_processing(start.elapsed().as_secs_f64(), "psd");
     Ok(result)
 }
 
 #[pyfunction]
 fn compute_stats(samples: Vec<f64>) -> PyResult<HashMap<String, f64>> {
-    Ok(signal::compute_stats(&samples))
+    let _span = info_span!("compute_stats", samples = samples.len()).entered();
+    let start = std::time::Instant::now();
+    
+    let result = signal::compute_stats(&samples);
+    
+    record_signal_processing(start.elapsed().as_secs_f64(), "stats");
+    Ok(result)
 }
 
 #[pyfunction]
@@ -338,6 +379,24 @@ fn py_save_h5(
         &labels,
     )
     .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e))
+}
+
+// ── Observability (new) ────────────────────────────────────
+
+#[pyfunction]
+fn py_metrics_snapshot() -> PyResult<String> {
+    let handle = engine::observability::PROMETHEUS_HANDLE
+        .get()
+        .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("metrics not initialized"))?;
+    Ok(handle.render())
+}
+
+#[pyfunction]
+fn py_health_check() -> PyResult<HashMap<String, String>> {
+    let mut status = HashMap::new();
+    status.insert("status".into(), "ok".into());
+    status.insert("version".into(), env!("CARGO_PKG_VERSION").into());
+    Ok(status)
 }
 
 #[cfg(test)]
