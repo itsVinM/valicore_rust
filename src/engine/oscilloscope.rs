@@ -1,26 +1,10 @@
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use async_trait::async_trait;
 use serde::Deserialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
-
-// Errors 
-#[derive(Debug, thiserror::Error)]
-pub enum InstrumentError {
-    #[error("connection failed: {0}")]
-    ConnectionFailed(String),
-    #[error("SCPI write failed: {0}")]
-    WriteFailed(String),
-    #[error("SCPI query failed: {0}")]
-    QueryFailed(String),
-    #[error("timeout: {0}")]
-    Timeout(String),
-    #[error("instrument closed")]
-    Closed,
-}
 
 #[derive(Debug, thiserror::Error)]
 pub enum ScopeError {
@@ -59,96 +43,6 @@ async fn read_line(stream: &mut TcpStream, buf: &mut [u8], pos: &mut usize) -> R
         *pos += 1;
         if tmp[0] == b'\n' { return Ok(()); }
     }
-}
-
-//SCPI trait (used by runner for any instrument) 
-
-#[async_trait]
-pub trait SCPIInstrument: Send {
-    async fn connect(&mut self) -> Result<(), InstrumentError>;
-    async fn write(&mut self, cmd: &str) -> Result<(), InstrumentError>;
-    async fn query(&mut self, cmd: &str) -> Result<String, InstrumentError>;
-    async fn close(&mut self) -> Result<(), InstrumentError>;
-    fn resource(&self) -> &str;
-    fn kind(&self) -> &str;
-}
-
-pub struct TcpInstrument {
-    resource: String,
-    kind: String,
-    addr: String,
-    port: u16,
-    stream: Option<TcpStream>,
-    timeout_ms: u64,
-    buf: [u8; 4096],
-    pos: usize,
-}
-
-impl TcpInstrument {
-    pub fn new(resource: &str, kind: &str, timeout_ms: u64) -> Self {
-        let (addr, port) = parse_resource(resource);
-        Self { resource: resource.to_string(), kind: kind.to_string(), addr, port, stream: None, timeout_ms, buf: [0u8; 4096], pos: 0 }
-    }
-}
-
-#[async_trait]
-impl SCPIInstrument for TcpInstrument {
-    fn resource(&self) -> &str { &self.resource }
-    fn kind(&self) -> &str { &self.kind }
-
-    async fn connect(&mut self) -> Result<(), InstrumentError> {
-        if self.stream.is_some() { return Ok(()); }
-        let dur = Duration::from_millis(self.timeout_ms);
-        let mut ep_buf = [0u8; 48];
-        let ep_len = fmt_endpoint(&self.addr, self.port, &mut ep_buf);
-        let ep = core::str::from_utf8(&ep_buf[..ep_len]).unwrap_or("?:?");
-        let stream = timeout(dur, TcpStream::connect(ep)).await
-            .map_err(|_| InstrumentError::Timeout(format!("connect to {ep}")))?
-            .map_err(|e| InstrumentError::ConnectionFailed(format!("{ep}: {e}")))?;
-        self.stream = Some(stream);
-        Ok(())
-    }
-
-    async fn write(&mut self, cmd: &str) -> Result<(), InstrumentError> {
-        let stream = self.stream.as_mut().ok_or(InstrumentError::Closed)?;
-        let dur = Duration::from_millis(self.timeout_ms);
-        timeout(dur, async { stream.write_all(cmd.as_bytes()).await?; stream.write_all(b"\n").await })
-            .await.map_err(|_| InstrumentError::Timeout(format!("write: {cmd}")))?
-            .map_err(|e| InstrumentError::WriteFailed(format!("{cmd}: {e}")))
-    }
-
-    async fn query(&mut self, cmd: &str) -> Result<String, InstrumentError> {
-        self.write(cmd).await?;
-        let stream = self.stream.as_mut().ok_or(InstrumentError::Closed)?;
-        self.pos = 0;
-        let dur = Duration::from_millis(self.timeout_ms);
-        timeout(dur, read_line(stream, &mut self.buf, &mut self.pos))
-            .await.map_err(|_| InstrumentError::Timeout(format!("query read: {cmd}")))?
-            .map_err(|e| InstrumentError::QueryFailed(format!("{cmd}: {e}")))?;
-        Ok(String::from_utf8_lossy(&self.buf[..self.pos]).trim().to_string())
-    }
-
-    async fn close(&mut self) -> Result<(), InstrumentError> {
-        if let Some(mut stream) = self.stream.take() { let _ = stream.shutdown().await; }
-        Ok(())
-    }
-}
-
-fn parse_resource(resource: &str) -> (String, u16) {
-    let mut parts: [&str; 6] = [""; 6];
-    let mut n = 0;
-    let mut remaining = resource;
-    while let Some(idx) = remaining.find("::") {
-        if n < parts.len() { parts[n] = &remaining[..idx]; n += 1; }
-        remaining = &remaining[idx + 2..];
-    }
-    if n < parts.len() { parts[n] = remaining; n += 1; }
-    let addr = if n >= 2 { parts[1].to_string() } else { "127.0.0.1".into() };
-    (addr, 5025)
-}
-
-pub fn create_instrument(kind: &str, resource: &str, timeout_ms: u64) -> Box<dyn SCPIInstrument> {
-    Box::new(TcpInstrument::new(resource, kind, timeout_ms))
 }
 
 // YAML structure 
@@ -280,12 +174,6 @@ impl Oscilloscope {
             .collect();
         b.sort();
         Ok(b)
-    }
-
-    pub fn info(brand: &str) -> Result<String, String> {
-        let spec = Self::load_library()?.scopes.get(brand)
-            .ok_or_else(|| format!("unknown brand '{brand}'"))?.clone();
-        Ok(format!("{brand} — {}", spec.description))
     }
 
     pub async fn detect_brand(addr: &str, port: u16, timeout_ms: u64) -> Result<String, ScopeError> {
@@ -718,32 +606,10 @@ mod tests {
         assert!(!Oscilloscope::available_gettings().is_empty());
     }
 
-    // TcpInstrument / parse_resource
-    #[test]
-    fn parse_resource_standard() {
-        let (addr, port) = parse_resource("TCPIP0::192.168.1.10::inst0::INSTR");
-        assert_eq!(addr, "192.168.1.10");
-        assert_eq!(port, 5025);
-    }
-
-    #[test]
-    fn parse_resource_missing() {
-        let (addr, port) = parse_resource("garbage");
-        assert_eq!(addr, "127.0.0.1");
-        assert_eq!(port, 5025);
-    }
-
-    #[test]
-    fn create_instrument_kind() {
-        let instr = create_instrument("dmm", "TCPIP0::1.2.3.4::inst0::INSTR", 5000);
-        assert_eq!(instr.kind(), "dmm");
-        assert_eq!(instr.resource(), "TCPIP0::1.2.3.4::inst0::INSTR");
-    }
-
     #[test]
     fn tcp_instrument_initial_state() {
-        let instr = TcpInstrument::new("TCPIP0::10.0.0.1::INSTR", "scope", 3000);
-        assert_eq!(instr.kind(), "scope");
-        assert!(instr.stream.is_none());
+        let instr = Oscilloscope::new("RS", 5000).unwrap();
+        assert_eq!(instr.brand(), "RS");
+        assert!(!instr.is_connected());
     }
 }

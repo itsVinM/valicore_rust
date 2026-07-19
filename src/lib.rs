@@ -4,12 +4,8 @@ mod signal;
 use std::collections::HashMap;
 
 use pyo3::prelude::*;
-use tracing::info_span;
 
-use engine::campaign::TestCampaign;
-use engine::observability::record_signal_processing;
 use engine::oscilloscope::Oscilloscope;
-use engine::runner;
 
 // ── tokio runtime (lazy, shared across PyO3 calls) ──────────
 
@@ -22,25 +18,6 @@ fn get_runtime() -> &'static tokio::runtime::Runtime {
 
 #[pymodule]
 fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    // Initialize tracing (env-filter reads RUST_LOG)
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .with_target(false)
-        .try_init();
-
-    // Initialize metrics
-    engine::observability::init_metrics();
-
-    // Start observability HTTP server (health + metrics endpoints)
-    if let Ok(addr) = std::env::var("VALICORE_METRICS_ADDR") {
-        if let Ok(socket_addr) = addr.parse() {
-            let rt = get_runtime();
-            rt.block_on(async {
-                engine::observability::start_http_server(socket_addr);
-            });
-        }
-    }
-
     // Signal processing
     m.add_function(wrap_pyfunction!(compute_fft, m)?)?;
     m.add_function(wrap_pyfunction!(compute_psd, m)?)?;
@@ -51,17 +28,12 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(compute_thd, m)?)?;
     m.add_function(wrap_pyfunction!(cross_correlate, m)?)?;
 
-    // Campaign engine
-    m.add_function(wrap_pyfunction!(py_campaign_info, m)?)?;
-    m.add_function(wrap_pyfunction!(py_run_campaign, m)?)?;
-
     // File export
     m.add_function(wrap_pyfunction!(py_save_csv, m)?)?;
     m.add_function(wrap_pyfunction!(py_save_h5, m)?)?;
 
-    // Observability
+    // Metrics
     m.add_function(wrap_pyfunction!(py_metrics_snapshot, m)?)?;
-    m.add_function(wrap_pyfunction!(py_health_check, m)?)?;
 
     // Oscilloscope
     m.add_class::<PyOscilloscope>()?;
@@ -69,7 +41,7 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
-// ── Oscilloscope (YAML-driven, matching Python ScopeAutomation) ─
+// ── Oscilloscope ────────────────────────────────────────────
 
 use engine::oscilloscope::ScopeError;
 
@@ -142,8 +114,6 @@ impl PyOscilloscope {
         self.inner.commands()
     }
 
-    // ── Generic dispatch (maps from SETTINGS/GETTINGS) ────
-
     #[staticmethod]
     fn brands() -> PyResult<Vec<String>> {
         Oscilloscope::brands().map_err(to_pyerr)
@@ -194,8 +164,6 @@ impl PyOscilloscope {
         get_runtime().block_on(self.inner.getting(name, &refs)).map_err(to_pyerr)
     }
 
-    // ── Actions (zero-arg commands) ──────────────────────
-
     fn reset(&mut self) -> PyResult<()> {
         get_runtime().block_on(self.inner.reset()).map_err(to_pyerr)
     }
@@ -216,8 +184,6 @@ impl PyOscilloscope {
         get_runtime().block_on(self.inner.single()).map_err(to_pyerr)
     }
 
-    // ── Waveform acquisition ─────────────────────────────
-
     fn get_waveform(&mut self, channel: &str) -> PyResult<Vec<f64>> {
         get_runtime().block_on(self.inner.get_waveform(channel)).map_err(to_pyerr)
     }
@@ -228,40 +194,31 @@ impl PyOscilloscope {
     }
 }
 
-// ── Signal processing (unchanged API) ──────────────────────
+// ── Signal processing ───────────────────────────────────────
 
 #[pyfunction]
 fn compute_fft(samples: Vec<f64>, sample_rate: f64) -> PyResult<Vec<Vec<f64>>> {
-    let _span = info_span!("compute_fft", samples = samples.len()).entered();
     let start = std::time::Instant::now();
-    
     let result = signal::fft_analysis(&samples, sample_rate)
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e))?;
-    
-    record_signal_processing(start.elapsed().as_secs_f64(), "fft");
+    engine::metrics::record_signal_processing(start.elapsed().as_micros() as u64);
     Ok(result)
 }
 
 #[pyfunction]
 fn compute_psd(samples: Vec<f64>, sample_rate: f64) -> PyResult<Vec<Vec<f64>>> {
-    let _span = info_span!("compute_psd", samples = samples.len()).entered();
     let start = std::time::Instant::now();
-    
     let result = signal::psd(&samples, sample_rate)
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e))?;
-    
-    record_signal_processing(start.elapsed().as_secs_f64(), "psd");
+    engine::metrics::record_signal_processing(start.elapsed().as_micros() as u64);
     Ok(result)
 }
 
 #[pyfunction]
 fn compute_stats(samples: Vec<f64>) -> PyResult<HashMap<String, f64>> {
-    let _span = info_span!("compute_stats", samples = samples.len()).entered();
     let start = std::time::Instant::now();
-    
     let result = signal::compute_stats(&samples);
-    
-    record_signal_processing(start.elapsed().as_secs_f64(), "stats");
+    engine::metrics::record_signal_processing(start.elapsed().as_micros() as u64);
     Ok(result)
 }
 
@@ -301,36 +258,6 @@ fn cross_correlate(a: Vec<f64>, b: Vec<f64>) -> PyResult<Vec<f64>> {
         ));
     }
     Ok(signal::cross_correlation(&a, &b))
-}
-
-// ── Campaign engine (new) ─────────────────────────────────
-
-#[pyfunction]
-fn py_campaign_info(path: &str) -> PyResult<String> {
-    let campaign = TestCampaign::from_yaml(path)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
-
-    let info = serde_json::json!({
-        "title": campaign.title,
-        "version": campaign.version,
-        "instruments": campaign.instruments.keys().collect::<Vec<_>>(),
-        "groups": campaign.groups.keys().collect::<Vec<_>>(),
-        "total_steps": campaign.total_steps(),
-    });
-    Ok(serde_json::to_string(&info).unwrap_or_default())
-}
-
-#[pyfunction]
-fn py_run_campaign(path: &str) -> PyResult<String> {
-    let campaign = TestCampaign::from_yaml(path)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
-
-    let rt = get_runtime();
-    let results = rt
-        .block_on(runner::run_campaign(&campaign))
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))?;
-
-    Ok(serde_json::to_string_pretty(&results).unwrap_or_default())
 }
 
 // ── File export ─────────────────────────────────────────────
@@ -381,22 +308,11 @@ fn py_save_h5(
     .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e))
 }
 
-// ── Observability (new) ────────────────────────────────────
+// ── Metrics ─────────────────────────────────────────────────
 
 #[pyfunction]
-fn py_metrics_snapshot() -> PyResult<String> {
-    let handle = engine::observability::PROMETHEUS_HANDLE
-        .get()
-        .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("metrics not initialized"))?;
-    Ok(handle.render())
-}
-
-#[pyfunction]
-fn py_health_check() -> PyResult<HashMap<String, String>> {
-    let mut status = HashMap::new();
-    status.insert("status".into(), "ok".into());
-    status.insert("version".into(), env!("CARGO_PKG_VERSION").into());
-    Ok(status)
+fn py_metrics_snapshot() -> PyResult<HashMap<String, f64>> {
+    Ok(engine::metrics::snapshot())
 }
 
 #[cfg(test)]
@@ -407,7 +323,6 @@ mod tests {
     fn runtime_singleton() {
         let r1 = get_runtime();
         let r2 = get_runtime();
-        // Both point to the same static
         assert!(std::ptr::eq(r1, r2));
     }
 }

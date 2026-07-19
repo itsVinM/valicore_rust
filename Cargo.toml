@@ -14,21 +14,10 @@ num-complex = "0.4"
 wide = "0.7"
 rayon = "1"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
 serde_yaml = "0.9"
-tokio = { version = "1", features = ["net", "io-util", "rt", "rt-multi-thread", "time", "sync"] }
-tokio-stream = "0.1"
-async-trait = "0.1"
-anyhow = "1"
+tokio = { version = "1", features = ["net", "io-util", "time", "rt", "rt-multi-thread"] }
 thiserror = "2"
 hdf5 = { version = "0.8", optional = true }
-
-# Observability
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-metrics = "0.22"
-metrics-exporter-prometheus = "0.14"
-axum = { version = "0.7", features = ["tokio"] }
 
 [features]
 default = []

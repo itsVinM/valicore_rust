@@ -28,15 +28,12 @@ if not _HAS_RUST:
 
 # Unified Oscilloscope export
 
-def Oscilloscope(brand: str, timeout_ms: int | None = None):  # noqa: N802
-    """Create an oscilloscope driver.
-
-    Returns the Rust Oscilloscope when the compiled extension is available,
-    otherwise falls back to the pyvisa-based Python driver.
-    """
-    if _HAS_RUST:
-        return _RustOscilloscope(brand, timeout_ms)
-    return _PythonOscilloscope(brand, timeout_ms)
+if _HAS_RUST:
+    Oscilloscope = _RustOscilloscope
+else:
+    class Oscilloscope:  # type: ignore[no-redef]
+        def __new__(cls, brand: str, timeout_ms: int | None = None):  # noqa: N802
+            return _PythonOscilloscope(brand, timeout_ms)
 
 
 # Signal processing (Rust-only, no fallback needed)
